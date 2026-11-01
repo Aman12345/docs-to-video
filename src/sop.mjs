@@ -49,7 +49,8 @@ const htmlLine = (i) => line(i, (t) => `<strong>${esc(t)}</strong>`, (t) => `<co
 export function sopMarkdown(v, baseUrl) {
   const scenes = v.storyboard?.scenes || [];
   const sb = v.storyboard || { title: v.title, scenes };
-  const lines = [`# ${v.title}`, '', v.description || '', '', `▶ Watch the video: ${baseUrl}/v/${v.slug}`, '', '## Overview', '', introText(sb), '', '## Steps', ''];
+  const lines = [`# ${v.title}`, '', v.description || '', '', `▶ Watch the video: ${baseUrl}/v/${v.slug}`, '', '## Overview', '', introText(sb), '',
+    ...(sb.setupWhy ? ['**Before you start:** you need ' + sb.setupWhy.replace(/^(a|an|the)\b/i, (m) => m.toLowerCase()) + '.', ''] : []), '## Steps', ''];
   scenes.forEach((s, k) => {
     lines.push(`### ${k + 1}. ${s.chapter}`, '', s.narration || '', '');
     instructions(s).forEach((i, j) => lines.push(`${j + 1}. ${mdLine(i)}`));

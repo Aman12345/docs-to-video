@@ -158,7 +158,9 @@ function friendly(msg = '') {
     .replace(/^( {2})?press (\S+)$/, '$1Press $2')
     .replace(/^step (\d+) of/, 'Step $1 of')
     .replace(/^plan: done after (\d+) actions/, 'The AI finished planning ($1 actions)')
-    .replace(/^plan: failed /, 'The AI tried: ').replace(/^plan: /, 'The AI planned: ')
+    .replace(/^plan: failed /, 'The AI tried: ').replace(/^plan: preparing test data off-camera first: /, 'Test data is missing, so the AI prepares it off-camera first: ').replace(/^plan: /, 'The AI planned: ')
+    .replace(/^setup: failed /, 'Preparing test data, tried: ').replace(/^setup: /, 'Preparing test data (off-camera): ')
+    .replace(/^cleanup: failed /, 'Cleaning up, tried: ').replace(/^cleanup: /, 'Cleaning up test records (off-camera): ')
     .replace(/^voiceover \((.*?)\): .*/, 'Voice made with $1')
     .replace(/^started \(attempt (\d+)\): (.*)/, 'Started (attempt $1)')
     .replace(/^ {2}/, '');

@@ -174,6 +174,18 @@ holds while the line is spoken, under a green "✓ Result" chip. It isn't counte
 New videos get it while being planned; older videos get it on their next re-record, and it is then saved
 with their steps, so it's only done once. Turn it off on the Settings page ("Check your work" ending).
 
+### Test data: off-camera setup and cleanup
+
+Many flows need data in a certain state first (a submitted, signed report to approve), and recording uses it up.
+When the planner finds the data missing it replies `setup` instead of failing; a setup agent then prepares it
+off-camera in the signed-in staging account (fake example data, "video test" in names; never payroll, payments,
+messages, settings or deletions), and the video is planned on top of it. Afterwards a cleanup agent deletes or
+archives only the records the setup and the video created. Both are saved with the video (`setup`, `cleanup`,
+`setupWhy`) and replay on every re-record before and after filming, so each recording gets fresh data and staging
+stays tidy. A broken setup step is fixed by the takeover AI and saved. The written SOP lists the prerequisite under
+"Before you start". Cost: about 10–30¢ once when planned; replays use no AI. Longer term, a dedicated demo company
+in staging (reset automatically, with logins for each role) makes multi-person flows reliable.
+
 ### Review and approval: the AI editor
 
 Viewers (share links, the support agent's search, video links) always get the **approved ("live") version**;

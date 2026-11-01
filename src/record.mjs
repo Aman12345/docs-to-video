@@ -56,8 +56,43 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
   await context.addInitScript({ content: `window.__demoRedact = ${JSON.stringify({ off: /^off$/i.test(process.env.REDACT || ''), patterns })};` });
   await context.addInitScript({ path: new URL('./redact.js', import.meta.url).pathname });
   const page = await context.newPage();
-  await page.goto(new URL(storyboard.startUrl, baseUrl).toString(), { waitUntil: 'domcontentloaded' });
+  const startAt = new URL(storyboard.startUrl, baseUrl).toString();
+  await page.goto(startAt, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(800);
+
+  // Off-camera steps: setup (prepare the test data the video needs) runs before filming starts, cleanup
+  // (remove what the video created) after it stops. A broken setup step is fixed by the AI like any other.
+  const offUsage = newUsage(repairModel());
+  const plainStep = async (st) => {
+    if (await performPageStep(page, st)) return;
+    if (!st.target) throw new Error(`The "${st.do}" step has no target.`);
+    const loc = locate(page, st.target);
+    await loc.waitFor({ state: 'visible', timeout: 15_000 });
+    await perform(page, loc, st, { timeout: 15_000 });
+    await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(700);
+  };
+  let setupSteps = null; // set when the AI changed a setup step, so the fix is saved
+  if (storyboard.setup?.length) try {
+    log(`preparing test data off-camera: ${storyboard.setupWhy || `${storyboard.setup.length} steps`}`);
+    const fixed = [];
+    for (const st of storyboard.setup) {
+      try { await plainStep(st); fixed.push(st); } catch (err) {
+        if (!repairOn()) throw Object.assign(err, { message: `Preparing the test data failed: ${err.message}` });
+        log(`  setup step didn't work (${String(err.message).split('\n')[0].slice(0, 120)}); the AI is taking over`);
+        const fix = await takeOver(page, { storyboard, scene: { chapter: 'Preparing test data (not recorded)', narration: storyboard.setupWhy || '' }, step: st, error: err, done: fixed, act: plainStep, clock: () => 0, usage: offUsage, log });
+        fixed.push(...fix.steps);
+        setupSteps = fixed;
+      }
+    }
+    await page.goto(startAt, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(1000);
+  } catch (e) {
+    e.screenshot = await page.screenshot({ type: 'jpeg', quality: 70 }).catch(() => null);
+    e.repairUsage = offUsage;
+    await browser.close().catch(() => {});
+    throw e;
+  }
   pos = { x: VIEWPORT.width / 2, y: VIEWPORT.height / 2 };
   await page.mouse.move(pos.x, pos.y);
 
@@ -204,11 +239,20 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
     e.screenshot = await page.screenshot({ type: 'jpeg', quality: 70 }).catch(() => null);
     e.message = `Recording stopped at "${storyboard.scenes[timeline.scenes.length]?.chapter || 'a step'}" (${page.url()}): ${e.message}`;
     e.repairUsage = repairUsage;
-    throw e;
-  } finally {
     await page.screencast.stop().catch(() => {});
     await browser.close().catch(() => {});
+    throw e;
   }
+  await page.screencast.stop().catch(() => {});
+  // Cleanup (not recorded): best effort; anything left behind is harmless test data.
+  if (storyboard.cleanup?.length) {
+    log(`cleaning up test records off-camera (${storyboard.cleanup.length} steps)`);
+    for (const st of storyboard.cleanup) {
+      try { await plainStep(st); } catch (err) { log(`  cleanup step skipped (${String(err.message).split('\n')[0].slice(0, 120)})`); break; }
+    }
+  }
+  await browser.close().catch(() => {});
+  repairUsage.costUsd += offUsage.costUsd;
   await fs.writeFile(path.join(outDir, 'timeline.json'), JSON.stringify(timeline, null, 2));
-  return { videoPath, timeline, repairs, repairUsage, check };
+  return { videoPath, timeline, repairs, repairUsage, check, setupSteps };
 }

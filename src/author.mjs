@@ -33,7 +33,11 @@ Rules:
 - Copy roles and names exactly from the snapshot. Prefer {"role","name"}. If several elements share
   the same role and name, add "nth": 0 (or the right index).
 - One action per reply. Keep the video short: reach the goal in as few actions as possible.
-- Reply {"do":"done"} as soon as the goal is visibly achieved on screen.
+- Reply {"do":"done"} as soon as the goal is visibly achieved on screen. If your actions created records (a report,
+  an expense, a policy), add "created": "what was created and its name", e.g. {"do":"done","created":"a report named Earnings - video test"}.
+- If the goal needs data that doesn't exist yet (e.g. a submitted, signed report to approve, an expense waiting
+  for review), don't stop: reply {"do":"setup","why":"exactly what test data is needed"} and it will be prepared
+  off-camera before the video is recorded.
 - If the app is busy (a spinner, "Working", "Generating", "Building"), use "wait": either the busy label with
   "gone": true (waits until it disappears), or text that appears only once it has finished. If that text is
   already on screen from earlier, the wait waits for a NEW occurrence. Allow enough seconds (up to 600).
@@ -84,16 +88,84 @@ You are signed in to a company's own business app with a test account. Be carefu
   tell the viewer to click it.
 - If you see a sign-in or login page, reply {"do":"fail","why":"The saved login has expired - log in again from the dashboard."}.`;
 
+// Off-camera helpers. Setup prepares the test data a video needs before it's recorded; cleanup removes what the
+// video created afterwards. Both are saved with the video and replayed on every re-record (not shown in it).
+const AGENT_FORMAT = `Each turn you see the current URL, page title, the actions taken so far, and an accessibility snapshot
+of the page (YAML lines like: - button "Save", - textbox "Name"). Reply with ONLY one JSON object, the single next action:
+{"do": "click" | "fill" | "select" | "press" | "goto" | "scroll" | "wait" | "done" | "fail",
+ "target": {"role": "button", "name": "Save"},   // or {"label": ...}, {"placeholder": ...}, {"text": ...}; add "nth" if several match
+ "value": "...", "key": "Enter", "url": "https://...", "text": "...", "seconds": 5, "why": "short reason"}
+Copy roles and names exactly from the snapshot. One action per reply.`;
+const SETUP_SYSTEM = `You prepare test data in a company's staging app (signed in with a test account) so that a how-to video
+can be recorded afterwards. Nobody sees these steps; work quickly and directly.
+${AGENT_FORMAT}
+Rules:
+- You may create, fill in, save, sign and submit test records using obviously fake example data (e.g. "Jane Example").
+  Put "video test" in any name, title, description or memo field so the record can be found and cleaned up later.
+- Never run or approve payroll or payments, never send emails, messages or invites, never change company settings,
+  permissions, bank details or integrations, and never delete anything.
+- Reply {"do":"done"} once the data is ready. Reply {"do":"fail","why":"..."} if it can't be done with this account
+  (e.g. it needs another person's login).`;
+const CLEANUP_SYSTEM = `You clean up after a how-to video was recorded in a company's staging app (test account). Nobody sees these steps.
+${AGENT_FORMAT}
+Rules:
+- Delete, archive or void ONLY the test records listed in the goal (they have "video test" in a name or memo, or were
+  just created with example data). Confirm the deletion dialog for those records only.
+- Never touch anything else, never change settings, never send anything.
+- Reply {"do":"done"} when finished, or straight away if you can't find them or aren't sure (leaving them is safe).`;
+
 const slugify = (s) => String(s || 'video').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || 'video';
+
+// One browser agent loop: the AI picks one action at a time until it replies done / fail / setup.
+async function runAgent(page, { goal, system, model, usage, log, label = 'plan', max = MAX_ACTIONS, note = '' }) {
+  const actions = [];
+  const history = [];
+  let errors = 0;
+  while (actions.length < max) {
+    const user = [
+      `Goal: ${goal}`, note,
+      `Current URL: ${page.url()}`,
+      `Page title: ${await page.title().catch(() => '')}`,
+      `Actions so far:\n${history.length ? history.map((h, i) => `${i + 1}. ${h}`).join('\n') : '(none yet)'}`,
+      `Accessibility snapshot:\n${await snapshot(page)}`,
+    ].filter(Boolean).join('\n\n');
+    const reply = parseJson(await chat([{ role: 'system', content: system }, { role: 'user', content: user }], usage, { model }));
+    if (['done', 'fail', 'setup'].includes(reply.do)) { log(`${label}: ${reply.do}${reply.why ? ` (${reply.why})` : ''} after ${actions.length} actions`); return { actions, end: reply }; }
+
+    const step = { do: reply.do, target: reply.target, value: reply.value, key: reply.key, url: reply.url, text: reply.text, seconds: reply.seconds, gone: reply.gone === true, narration: reply.narration };
+    // The AI sometimes puts the wait text in "target"; treat it as the text to wait for.
+    if (step.do === 'wait' && !step.text && step.target?.text) { step.text = step.target.text; delete step.target; }
+    if (step.do === 'wait') delete step.target;
+    try {
+      if (!(await performPageStep(page, step))) {
+        if (!step.target) throw new Error('No target given for this action.');
+        const loc = locate(page, step.target);
+        await loc.waitFor({ state: 'visible', timeout: 8000 });
+        await perform(page, loc, step);
+      }
+      await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
+      await page.waitForTimeout(1000);
+      actions.push(step);
+      history.push(`${describe(step)} -> ok`);
+      errors = 0;
+      log(`${label}: ${describe(step)}`);
+    } catch (e) {
+      errors += 1;
+      history.push(`${describe(step)} -> FAILED: ${e.message.split('\n')[0].slice(0, 200)}`);
+      log(`${label}: failed ${describe(step)} (${errors}/${MAX_ERRORS})`);
+      if (errors >= MAX_ERRORS) throw new Error(`Could not complete the ${label === 'plan' ? '' : `${label} `}steps: ${e.message.split('\n')[0]}`);
+    }
+  }
+  return { actions, end: { do: 'done', why: 'step limit reached' } };
+}
 
 export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState, log = console.log }) {
   const start = new URL(startUrl || '/', baseUrl).toString();
   const model = authorModel();
   const usage = newUsage(model);
-  const actions = [];
-  const history = [];
+  let actions = [];
   let checkPlan = null;
-  let errors = 0;
+  let setup = [], cleanup = [], setupWhy = '';
 
   const browser = await chromium.launch(LAUNCH);
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, ...(storageState ? { storageState } : {}) });
@@ -103,48 +175,35 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
     await page.goto(start, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(1200);
 
-    while (actions.length < MAX_ACTIONS) {
-      const user = [
-        `Goal: ${prompt}`,
-        `Current URL: ${page.url()}`,
-        `Page title: ${await page.title().catch(() => '')}`,
-        `Actions so far:\n${history.length ? history.map((h, i) => `${i + 1}. ${h}`).join('\n') : '(none yet)'}`,
-        `Accessibility snapshot:\n${await snapshot(page)}`,
-      ].join('\n\n');
-      const reply = parseJson(await chat([{ role: 'system', content: system }, { role: 'user', content: user }], usage, { model }));
-
-      if (reply.do === 'done') { log(`plan: done after ${actions.length} actions`); break; }
-      if (reply.do === 'fail') throw new Error(`The AI stopped: ${reply.why || 'blocked'}`);
-
-      const step = { do: reply.do, target: reply.target, value: reply.value, key: reply.key, url: reply.url, text: reply.text, seconds: reply.seconds, gone: reply.gone === true, narration: reply.narration };
-      // The AI sometimes puts the wait text in "target"; treat it as the text to wait for.
-      if (step.do === 'wait' && !step.text && step.target?.text) { step.text = step.target.text; delete step.target; }
-      if (step.do === 'wait') delete step.target;
-      try {
-        if (!(await performPageStep(page, step))) {
-          if (!step.target) throw new Error('No target given for this action.');
-          const loc = locate(page, step.target);
-          await loc.waitFor({ state: 'visible', timeout: 8000 });
-          await perform(page, loc, step);
-        }
-        await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
-        await page.waitForTimeout(1000);
-        actions.push(step);
-        history.push(`${describe(step)} -> ok`);
-        errors = 0;
-        log(`plan: ${describe(step)}`);
-      } catch (e) {
-        errors += 1;
-        history.push(`${describe(step)} -> FAILED: ${e.message.split('\n')[0].slice(0, 200)}`);
-        log(`plan: failed ${describe(step)} (${errors}/${MAX_ERRORS})`);
-        if (errors >= MAX_ERRORS) throw new Error(`Could not complete the steps: ${e.message.split('\n')[0]}`);
-      }
+    let run = await runAgent(page, { goal: prompt, system, model, usage, log });
+    // Missing data (e.g. no submitted report to approve): prepare it off-camera, then plan the video again.
+    if (run.end.do === 'setup') {
+      if (!storageState) throw new Error(`The AI stopped: it needs test data first (${run.end.why}), which is only prepared in signed-in apps.`);
+      setupWhy = String(run.end.why || 'test data').slice(0, 300);
+      log(`plan: preparing test data off-camera first: ${setupWhy}`);
+      const prep = await runAgent(page, { goal: `Prepare this test data: ${setupWhy}. (The video will then show: ${prompt})`, system: SETUP_SYSTEM + guidelinesText(), model, usage, log, label: 'setup', max: 25 });
+      if (prep.end.do !== 'done') throw new Error(`The AI stopped: it couldn't prepare the test data this video needs (${prep.end.why || setupWhy}).`);
+      setup = prep.actions;
+      await page.goto(start, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(1200);
+      run = await runAgent(page, { goal: prompt, system, model, usage, log, note: `Test data was just prepared for this video: ${setupWhy}. Use it; don't ask for setup again.` });
+      if (run.end.do === 'setup') throw new Error(`The AI stopped: it still can't find the test data it needs (${run.end.why}).`);
     }
+    if (run.end.do === 'fail') throw new Error(`The AI stopped: ${run.end.why || 'blocked'}`);
+    actions = run.actions;
     if (!actions.length) throw new Error('The AI did not find any steps to perform.');
     // The ending: show the finished result ("Check your work"), planned on this final screen.
     if (get('checkStep') !== 'off') {
       checkPlan = await planCheck(page, { storyboard: { title: prompt, prompt, scenes: [{ steps: actions }] }, usage, log,
         tryShow: async (pl) => locate(page, pl.show).waitFor({ state: 'visible', timeout: 6000 }).then(() => true, () => false) }).catch((e) => { log(`check your work: skipped (${e.message.split('\n')[0]})`); return null; });
+    }
+    // Cleanup: remove what the setup and the video created, so staging doesn't fill up with test records.
+    const created = [setupWhy && `the test data prepared for the video (${setupWhy})`, run.end.created].filter(Boolean).join('; ');
+    if (storageState && created) {
+      try {
+        const done = await runAgent(page, { goal: `Delete or archive these test records: ${created}.`, system: CLEANUP_SYSTEM, model, usage, log, label: 'cleanup', max: 15 });
+        cleanup = done.end.do === 'done' ? done.actions : [];
+      } catch (e) { log(`cleanup: skipped (${e.message.split('\n')[0]})`); }
     }
   } catch (e) {
     e.screenshot = await page.screenshot({ type: 'jpeg', quality: 70 }).catch(() => null);
@@ -183,6 +242,8 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
     outro: typeof outline.outro === 'string' ? outline.outro : undefined,
     checks: Array.isArray(outline.checks) ? outline.checks.slice(0, 4).map(String) : undefined,
     tags: { source: 'prompt' },
+    ...(setup.length ? { setup: setup.map(toStep).map(({ zoom, ...st }) => st), setupWhy } : {}),
+    ...(cleanup.length ? { cleanup: cleanup.map(toStep).map(({ zoom, ...st }) => st) } : {}),
     prompt,
     startUrl: startUrl || '/',
     scenes,

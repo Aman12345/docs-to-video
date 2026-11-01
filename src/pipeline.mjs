@@ -62,6 +62,7 @@ export async function makeVideo({ storyboard, baseUrl, jobId, storageState, log 
         throw e;
       }
       aiUsd += r.repairUsage.costUsd;
+      if (r.setupSteps) { storyboard = { ...storyboard, setup: r.setupSteps }; aiFixes.push('The AI fixed a step that prepares the test data; saved for next time.'); }
       if (r.repairs.length) {
         storyboard = applyRepairs(storyboard, r.repairs);
         for (const x of r.repairs) aiFixes.push(`The AI fixed a step in "${storyboard.scenes[x.scene].chapter}": ${x.why} Check that the narration still matches.`);
