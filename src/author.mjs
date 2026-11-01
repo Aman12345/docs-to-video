@@ -35,6 +35,19 @@ Rules:
   complete a purchase. Adding an item to a cart is fine.
 - For cookie or consent banners, choose reject / decline / necessary-only. Close unrelated popups.`;
 
+// Extra rules when signed in to a company's own app (e.g. Miter staging) with a saved login.
+const SIGNED_IN_RULES = `
+
+You are signed in to a company's own business app with a test account. Be careful:
+- Never do anything that cannot be undone or that reaches other people: do not run, submit or approve
+  payroll, payments or timesheets; do not send, invite, email, message, publish, delete, archive or
+  void anything; do not change settings, permissions, bank details or integrations.
+- You may open screens, menus and forms and fill in fields with obviously fake example data
+  (e.g. "Jane Example") to show how something works. Stop before the final Save / Submit / Send /
+  Confirm button unless the goal explicitly asks to create a test record; the narration can still
+  tell the viewer to click it.
+- If you see a sign-in or login page, reply {"do":"fail","why":"The saved login has expired - log in again from the dashboard."}.`;
+
 function parseJson(text) {
   const s = text.indexOf('{'), e = text.lastIndexOf('}');
   if (s < 0 || e < s) throw new Error(`No JSON in model reply: ${text.slice(0, 200)}`);
@@ -73,7 +86,7 @@ const describe = (a) => `${a.do} ${a.target ? JSON.stringify(a.target) : a.url |
 
 const slugify = (s) => String(s || 'video').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || 'video';
 
-export async function authorStoryboard({ prompt, startUrl, baseUrl, log = console.log }) {
+export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState, log = console.log }) {
   const start = new URL(startUrl || '/', baseUrl).toString();
   const usage = { calls: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, model: MODEL };
   const actions = [];
@@ -81,7 +94,9 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, log = consol
   let errors = 0;
 
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, ...(storageState ? { storageState } : {}) });
+  const page = await context.newPage();
+  const system = SYSTEM + (storageState ? SIGNED_IN_RULES : '');
   try {
     await page.goto(start, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(1200);
@@ -94,7 +109,7 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, log = consol
         `Actions so far:\n${history.length ? history.map((h, i) => `${i + 1}. ${h}`).join('\n') : '(none yet)'}`,
         `Accessibility snapshot:\n${await snapshot(page)}`,
       ].join('\n\n');
-      const reply = parseJson(await chat([{ role: 'system', content: SYSTEM }, { role: 'user', content: user }], usage));
+      const reply = parseJson(await chat([{ role: 'system', content: system }, { role: 'user', content: user }], usage));
 
       if (reply.do === 'done') { log(`plan: done after ${actions.length} actions`); break; }
       if (reply.do === 'fail') throw new Error(`Claude stopped: ${reply.why || 'blocked'}`);

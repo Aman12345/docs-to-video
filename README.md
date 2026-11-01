@@ -76,3 +76,15 @@ the logo in the caption band, a closing card, and chapter markers in the MP4. Al
 | `TTS_MODEL` / `TTS_VOICE` | Voice model and voice | `mistralai/voxtral-mini-tts-3-0` / `en_paul_neutral` |
 
 If text-to-speech fails, the video is still made with captions only.
+
+## Saved logins (apps that need sign-in, e.g. Miter staging)
+
+1. On the dashboard, under **Saved logins**, enter a name (e.g. `miter-staging`) and the sign-in page, then press **Open login window**.
+2. A live view of the cloud browser opens. Sign in yourself: click on the picture to click, type in the box under it.
+   If the site emails you a sign-in link, paste it into the link box at the top. Press **Save login** once you're in.
+3. When describing a video, pick the login under **Signed in as**. Leave "Start at" empty to start where you signed in.
+
+Only the browser session (cookies and local storage) is stored, encrypted in MongoDB with `LOGIN_SECRET`
+(falls back to `DEMO_PASSWORD`). Passwords are never stored. While signed in, Claude follows extra rules: no running
+payroll, paying, sending, inviting, deleting or changing settings, and it stops before the final Save/Submit unless asked.
+Use a test account with demo data: share links are public and videos show whatever is on screen.

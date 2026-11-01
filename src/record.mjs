@@ -26,11 +26,11 @@ async function glide(page, x, y, steps = 32) {
 // How long a scene must last: long enough to read the caption, and to finish its voiceover.
 const sceneMinMs = (text, voiceMs = 0) => Math.max(3500, (text.split(/\s+/).length / 2.6) * 1000 + 1200, voiceMs ? CHAPTER_CARD_MS + voiceMs + 700 : 0);
 
-export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs = [] }) {
+export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs = [], storageState }) {
   await fs.mkdir(outDir, { recursive: true });
   const videoPath = path.join(outDir, 'raw.webm');
   const browser = await chromium.launch(); // headless; Render has no display
-  const context = await browser.newContext({ viewport: VIEWPORT });
+  const context = await browser.newContext({ viewport: VIEWPORT, ...(storageState ? { storageState } : {}) });
   await context.addInitScript({ content: `window.__demoBrand = ${JSON.stringify({ primary: brand.primary })};` });
   await context.addInitScript({ path: new URL('./cursor.js', import.meta.url).pathname });
   const page = await context.newPage();

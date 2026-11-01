@@ -5,6 +5,7 @@ import { getDb, ensureIndexes, closeDb } from './store.mjs';
 import { makeVideo } from './pipeline.mjs';
 import { authorStoryboard } from './author.mjs';
 import { startDemoApp } from './demo-server.mjs';
+import { loadLogin } from './logins.mjs';
 
 const POLL_MS = 3000;
 const STALE_MS = 30 * 60 * 1000; // a job "running" this long belonged to a worker that died
@@ -40,11 +41,15 @@ export async function startWorker() {
       log(`started: ${job.storyboard?.title || job.prompt}`);
       try {
         let storyboard = job.storyboard;
+        // Saved login (e.g. Miter staging): every browser for this job starts already signed in.
+        const loginName = job.login || storyboard?.login;
+        const storageState = loginName ? (await loadLogin(db, loginName)).storageState : undefined;
         // Prompt jobs: Claude plans the storyboard first (skipped on retry if already planned).
         if (job.type === 'prompt' && !storyboard) {
           await jobs.updateOne({ _id: job._id }, { $set: { stage: 'planning' } });
-          const plan = await authorStoryboard({ prompt: job.prompt, startUrl: job.startUrl, baseUrl, log });
+          const plan = await authorStoryboard({ prompt: job.prompt, startUrl: job.startUrl, baseUrl, storageState, log });
           storyboard = plan.storyboard;
+          if (loginName) storyboard.login = loginName;
           await jobs.updateOne({ _id: job._id }, { $set: { storyboard, planUsage: plan.usage } });
           if (job.planOnly) {
             await jobs.updateOne({ _id: job._id }, { $set: { status: 'planned', stage: null, finishedAt: new Date() } });
@@ -53,12 +58,12 @@ export async function startWorker() {
           }
         }
         await jobs.updateOne({ _id: job._id }, { $set: { stage: 'recording' } });
-        const saved = await makeVideo({ storyboard, baseUrl, jobId: job._id, log });
+        const saved = await makeVideo({ storyboard, baseUrl, jobId: job._id, storageState, log });
         await jobs.updateOne({ _id: job._id }, { $set: { status: 'done', stage: null, finishedAt: new Date(), result: saved } });
         log('done');
       } catch (err) {
         // Don't retry when Claude was blocked (CAPTCHA, login wall) or the key is missing.
-        const retry = job.attempts < 2 && !/Claude stopped|OPENROUTER_API_KEY|did not find any steps/.test(err.message);
+        const retry = job.attempts < 2 && !/Claude stopped|OPENROUTER_API_KEY|did not find any steps|Saved login/.test(err.message);
         await jobs.updateOne({ _id: job._id }, { $set: { status: retry ? 'queued' : 'failed', error: err.message.slice(0, 2000) } });
         log(`failed (${retry ? 'will retry' : 'giving up'}): ${err.message.split('\n')[0]}`);
       }

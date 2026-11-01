@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ObjectId } from 'mongodb';
 import { narrationOn } from './compose.mjs';
+import { listLogins, startLive, getLive, liveAction, liveShot, saveLive, closeLive, deleteLogin, cleanName, VIEWPORT } from './logins.mjs';
 
 const SB_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'storyboards');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -34,7 +35,7 @@ function allowed(req, res) {
 
 const redirect = (res, to = '/') => res.writeHead(303, { Location: to }).end();
 
-function page({ sbs, jobs, videos, busy, error }) {
+function page({ sbs, jobs, videos, busy, error, logins = [] }) {
   const statusPill = (s) => `<span class="pill ${s}">${esc(s)}</span>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Docs to Video demo</title>${busy ? '<meta http-equiv="refresh" content="4">' : ''}
@@ -66,9 +67,10 @@ ${error ? `<div class="err">${esc(error)}</div>` : ''}
 <textarea id="prompt" name="prompt" class="plain" required placeholder="e.g. Search Wikipedia for Ada Lovelace and open her article"></textarea>
 <div class="row" style="margin-top:12px"><div><label for="start"><strong>Start at</strong> <span class="meta">website address; leave empty to use the sample billing app</span></label>
 <input id="start" name="startUrl" type="text" inputmode="url" autocomplete="off" placeholder="en.wikipedia.org"></div>
+${logins.length ? `<div style="flex:0;min-width:200px"><label for="login"><strong>Signed in as</strong></label><select id="login" name="login"><option value="">Not signed in</option>${logins.map((l) => `<option value="${esc(l.name)}">${esc(l.name)}</option>`).join('')}</select></div>` : ''}
 <div style="flex:0;white-space:nowrap;padding-bottom:9px"><label class="inline meta"><input type="checkbox" name="planOnly" value="1"> Plan only</label></div>
 <div style="flex:0"><button type="submit">Plan and record</button></div></div>
-<p class="meta">Claude works out the clicks on the real site, then the video is recorded. Takes about 2–4 minutes. Sites that need a login or show a robot check won't work, and it never types passwords or completes purchases.</p>
+<p class="meta">Claude works out the clicks on the real site, then the video is recorded. Takes about 2–4 minutes. Sites that show a robot check won't work, and it never types passwords or completes purchases. For apps that need a login (like Miter staging), add a saved login below and pick it under "Signed in as"; leave "Start at" empty to start where you logged in.</p>
 </form></div>
 <div class="card"><form method="post" action="/ui/make"><div class="row"><div>
 <label for="sb"><strong>Or pick a ready-made storyboard</strong></label>
@@ -77,6 +79,14 @@ ${error ? `<div class="err">${esc(error)}</div>` : ''}
 <details><summary>Or paste your own storyboard (JSON)</summary><textarea name="custom" placeholder='{"id":"my-video","title":"...","startUrl":"/#/dashboard","scenes":[...]}'></textarea>
 <p class="meta">Steps can click, fill, select, pause or expect, targeting elements by role and name, label, test id or text. It runs against APP_URL, or the bundled sample app.</p></details>
 </form></div>
+
+<h2>Saved logins</h2>
+<div class="card">${logins.length ? `<table style="margin-bottom:14px"><thead><tr><th>Name</th><th>Site</th><th>Saved</th><th></th></tr></thead><tbody>${logins.map((l) => `<tr><td><strong>${esc(l.name)}</strong></td><td class="meta">${esc(l.origin)}</td><td class="meta">${ago(l.savedAt)}</td><td><form method="post" action="/ui/logins/${esc(l.name)}/delete" style="display:inline"><button class="ghost" style="padding:3px 10px">Remove</button></form></td></tr>`).join('')}</tbody></table>` : ''}
+<form method="post" action="/ui/logins/start"><div class="row">
+<div style="flex:0;min-width:180px"><label for="lname"><strong>Name</strong></label><input id="lname" name="name" type="text" required placeholder="miter-staging"></div>
+<div><label for="lurl"><strong>Sign-in page</strong></label><input id="lurl" name="url" type="text" required inputmode="url" autocomplete="off" placeholder="staging.example.com/login"></div>
+<div style="flex:0"><button type="submit">Open login window</button></div></div>
+<p class="meta">Opens the cloud browser here so you can sign in yourself. Only the signed-in session is saved, encrypted; your password is never stored. Use a test account with demo data, because videos show whatever is on screen.</p></form></div>
 
 <h2>Jobs</h2>
 ${jobs.length ? `<table><thead><tr><th>Video</th><th>Status</th><th>Queued</th><th>Result</th></tr></thead><tbody>
@@ -100,6 +110,46 @@ ${videos.length ? `<div class="grid">${videos.map((v) => `<div class="card vid">
 <div class="actions"><a class="btn" href="/v/${esc(v.slug)}">Watch</a><a class="btn" href="/videos/${esc(v.slug)}/video?v=${v.version}" download="${esc(v.slug)}.mp4">Download MP4</a>
 ${v.status !== 'approved' ? `<form method="post" action="/ui/approve/${esc(v.slug)}"><button class="ghost">Approve</button></form>` : ''}</div></div>`).join('')}</div>` : '<p class="empty">No videos yet. Make one above.</p>'}
 </main></body></html>`;
+}
+
+// Live view of the cloud browser: the picture refreshes several times a second; clicks on it and
+// typed text are sent to the real browser. The person signs in themselves; we only save the session.
+function loginPage(name) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in: ${esc(name)}</title><style>
+body{margin:0;font:15px/1.5 system-ui,sans-serif;background:#f7f8fa;color:#1d2433}main{max-width:1320px;margin:0 auto;padding:18px 16px}
+h1{font-size:20px;margin:0 0 4px}.meta{color:#667085;font-size:13px}.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+input{font:inherit;padding:8px 10px;border:1px solid #d0d5dd;border-radius:8px}button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid #3b5bdb;background:#fff;color:#3b5bdb;cursor:pointer}
+button.main{background:#067647;border-color:#067647;color:#fff;font-weight:600}#screen{width:100%;max-width:${VIEWPORT.width}px;aspect-ratio:${VIEWPORT.width}/${VIEWPORT.height};border:1px solid #d0d5dd;border-radius:10px;cursor:pointer;background:#fff;display:block}
+</style></head><body><main>
+<h1>Sign in to ${esc(name)}</h1>
+<p class="meta">This is the cloud browser. Click on the picture to click in it. Type into the box below and press "Type" (it goes into whichever field you last clicked). When you can see you are signed in, press <strong>Save login</strong>. Only the session is kept, never what you type.</p>
+<div class="bar"><input id="url" style="flex:1;min-width:260px" placeholder="Paste a link here (e.g. a sign-in link from your email)"><button onclick="act({type:'goto',url:document.getElementById('url').value})">Go</button><button onclick="act({type:'back'})">Back</button></div>
+<img id="screen" alt="Cloud browser" draggable="false">
+<div class="bar"><input id="text" type="password" autocomplete="off" style="flex:1;min-width:220px" placeholder="Text to type (hidden while typing)" onkeydown="if(event.key==='Enter'){sendText(true);event.preventDefault()}">
+<label class="meta"><input type="checkbox" onchange="document.getElementById('text').type=this.checked?'text':'password'"> show</label>
+<button onclick="sendText(false)">Type</button><button onclick="act({type:'key',key:'Enter'})">Enter ⏎</button><button onclick="act({type:'key',key:'Tab'})">Tab</button><button onclick="act({type:'key',key:'Backspace'})">⌫</button>
+<button onclick="act({type:'scroll',dy:400})">Scroll ↓</button><button onclick="act({type:'scroll',dy:-400})">Scroll ↑</button></div>
+<div class="bar"><form method="post" action="/ui/logins/${esc(name)}/save"><button class="main">Save login</button></form>
+<form method="post" action="/ui/logins/${esc(name)}/cancel"><button>Cancel</button></form><span class="meta" id="where"></span></div>
+</main><script>
+const img = document.getElementById('screen'), where = document.getElementById('where');
+let busy = false, closed = false;
+async function refresh() {
+  if (busy || closed) return; busy = true;
+  try {
+    const r = await fetch('/ui/logins/${esc(name)}/shot?t=' + Date.now());
+    if (r.status === 410) { closed = true; where.textContent = 'This window closed after 10 minutes without use. Go back and open it again.'; return; }
+    const u = URL.createObjectURL(await r.blob()); const old = img.src; img.src = u; if (old) URL.revokeObjectURL(old);
+    where.textContent = decodeURI(r.headers.get('X-Page-Url') || '');
+  } finally { busy = false; }
+}
+async function act(a) { await fetch('/ui/logins/${esc(name)}/act', { method: 'POST', body: JSON.stringify(a) }); refresh(); }
+function sendText(enter) { const t = document.getElementById('text'); act({ type: 'type', text: t.value }).then(() => enter && act({ type: 'key', key: 'Enter' })); t.value = ''; }
+img.addEventListener('click', (e) => { const b = img.getBoundingClientRect(); act({ type: 'click', x: Math.round((e.clientX - b.left) * ${VIEWPORT.width} / b.width), y: Math.round((e.clientY - b.top) * ${VIEWPORT.height} / b.height) }); });
+img.addEventListener('wheel', (e) => { e.preventDefault(); act({ type: 'scroll', dy: Math.sign(e.deltaY) * 300 }); }, { passive: false });
+setInterval(refresh, 700); refresh();
+</script></body></html>`;
 }
 
 // Returns true when it handled the request.
@@ -128,9 +178,13 @@ export async function handleDashboard(db, req, res, url) {
     const prompt = (form.prompt || '').trim().slice(0, 1000);
     if (!prompt) return redirect(res, `/?error=${encodeURIComponent('Describe the video you want first.')}`);
     let startUrl = (form.startUrl || '').trim();
+    const login = cleanName(form.login || '');
+    const saved = login ? await db.collection('logins').findOne({ name: login }, { projection: { url: 1 } }) : null;
+    if (login && !saved) return redirect(res, `/?error=${encodeURIComponent(`Saved login "${login}" was not found.`)}`);
+    if (!startUrl && saved) startUrl = saved.url;
     if (startUrl && !/^https?:\/\//i.test(startUrl)) startUrl = `https://${startUrl}`;
     await db.collection('jobs').insertOne({
-      type: 'prompt', status: 'queued', prompt, startUrl: startUrl || '/#/dashboard',
+      type: 'prompt', status: 'queued', prompt, startUrl: startUrl || '/#/dashboard', ...(login ? { login } : {}),
       planOnly: form.planOnly === '1', attempts: 0, createdAt: new Date(), source: 'dashboard',
     });
     return redirect(res);
@@ -154,6 +208,42 @@ export async function handleDashboard(db, req, res, url) {
     res.writeHead(job?.storyboard ? 200 : 404, { 'Content-Type': 'application/json' }).end(JSON.stringify(job?.storyboard || { error: 'not found' }, null, 2));
     return true;
   }
+  if (req.method === 'POST' && p === '/ui/logins/start') {
+    const form = await readForm(req);
+    const name = cleanName(form.name);
+    let url = (form.url || '').trim();
+    if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;
+    try { new URL(url); } catch { return redirect(res, `/?error=${encodeURIComponent('Enter the sign-in page address, e.g. staging.example.com/login')}`); }
+    if (!name) return redirect(res, `/?error=${encodeURIComponent('Give the login a name, e.g. miter-staging')}`);
+    await startLive(name, url);
+    return redirect(res, `/ui/logins/${name}`);
+  }
+  const lm = p.match(/^\/ui\/logins\/([a-z0-9-]+)(?:\/(shot|act|save|cancel|delete))?$/);
+  if (lm) {
+    const [, name, sub] = lm;
+    if (req.method === 'POST' && sub === 'delete') { await deleteLogin(db, name); return redirect(res); }
+    if (req.method === 'POST' && sub === 'cancel') { await closeLive(name); return redirect(res); }
+    if (req.method === 'POST' && sub === 'save') {
+      try { await saveLive(db, name); } catch (e) { return redirect(res, `/?error=${encodeURIComponent(e.message)}`); }
+      return redirect(res);
+    }
+    if (req.method === 'GET' && sub === 'shot') {
+      const shot = await liveShot(name);
+      if (!shot?.jpg) { res.writeHead(410, { 'Content-Type': 'text/plain' }).end('closed'); return true; }
+      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store', 'X-Page-Url': encodeURI(shot.url) }).end(shot.jpg);
+      return true;
+    }
+    if (req.method === 'POST' && sub === 'act') {
+      const body = await new Promise((r) => { let d = ''; req.on('data', (c) => { d += c; if (d.length > 1e4) req.destroy(); }); req.on('end', () => r(d)); });
+      try { await liveAction(name, JSON.parse(body || '{}')); res.writeHead(204).end(); } catch (e) { res.writeHead(410, { 'Content-Type': 'text/plain' }).end(e.message); }
+      return true;
+    }
+    if (req.method === 'GET' && !sub) {
+      if (!getLive(name)) return redirect(res, `/?error=${encodeURIComponent('That login window has closed. Open it again.')}`);
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(loginPage(name));
+      return true;
+    }
+  }
   if (req.method === 'GET' && p === '/ui/voice-check') {
     // Speaks one short sentence with the configured voice, to confirm narration works without making a video.
     const res2 = narrationOn()
@@ -173,15 +263,16 @@ export async function handleDashboard(db, req, res, url) {
     return redirect(res);
   }
   if (req.method === 'GET' && p === '/') {
-    const [sbs, jobs, videos] = await Promise.all([
+    const [sbs, jobs, videos, logins] = await Promise.all([
       storyboards(),
       db.collection('jobs').find({}, { projection: { 'storyboard.scenes': 0 } }).sort({ createdAt: -1 }).limit(8).toArray(),
       db.collection('videos').find({}).sort({ updatedAt: -1 }).limit(24).toArray(),
+      listLogins(db),
     ]);
     const busy = jobs.some((j) => j.status === 'queued' || j.status === 'running');
     // The list query leaves out full storyboards; the steps link only needs to know one exists.
     jobs.forEach((j) => { if (j.storyboard) j.storyboard = { title: j.storyboard.title }; });
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(page({ sbs, jobs, videos, busy, error: url.searchParams.get('error') }));
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(page({ sbs, jobs, videos, busy, logins, error: url.searchParams.get('error') }));
     return true;
   }
   return false;

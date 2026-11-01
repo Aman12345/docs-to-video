@@ -11,7 +11,7 @@ import { startDemoApp } from './demo-server.mjs';
 
 const secs = (t) => ((Date.now() - t) / 1000).toFixed(1);
 
-export async function makeVideo({ storyboard, baseUrl, jobId, log = console.log }) {
+export async function makeVideo({ storyboard, baseUrl, jobId, storageState, log = console.log }) {
   const workDir = await fs.mkdtemp(path.join(os.tmpdir(), `video-${storyboard.id}-`));
   try {
     const brand = await getBrand();
@@ -20,7 +20,7 @@ export async function makeVideo({ storyboard, baseUrl, jobId, log = console.log 
     const voice = await synthesizeVoice(storyboard.scenes, workDir, log);
     if (voice.length) log(`voiceover: ${voice.length} clips in ${secs(t)}s`);
     t = Date.now();
-    const { videoPath, timeline } = await record({ storyboard, baseUrl, outDir: workDir, brand, voiceMs: voice.map((v) => v.ms) });
+    const { videoPath, timeline } = await record({ storyboard, baseUrl, outDir: workDir, brand, voiceMs: voice.map((v) => v.ms), storageState });
     log(`recorded ${timeline.scenes.length} scenes in ${secs(t)}s`);
     t = Date.now();
     const cards = await renderCards({ storyboard, brand, outDir: workDir });
