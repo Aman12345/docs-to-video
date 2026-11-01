@@ -21,7 +21,9 @@ export function instructions(scene) {
       case 'hover': return { verb: 'Point at', what: n };
       case 'goto': return { verb: 'Go to', what: st.url };
       case 'scroll': return { verb: 'Scroll', what: (st.dy || 500) < 0 ? 'up' : 'down', plain: true };
-      case 'wait': return { verb: 'Wait until you see', what: st.text || 'the result', note: 'this can take a few minutes' };
+      case 'wait': return st.gone
+        ? { verb: 'Wait until', what: st.text || 'the busy indicator', note: 'disappears; this can take a few minutes' }
+        : { verb: 'Wait until you see', what: st.text || 'the result', note: 'this can take a few minutes' };
       default: return null; // expect / pause: nothing for the reader to do
     }
   }).filter(Boolean);

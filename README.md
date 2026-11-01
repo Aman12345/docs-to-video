@@ -71,6 +71,8 @@ the logo in the caption band, a closing card, and chapter markers in the MP4. Al
 | `BRAND_PRIMARY` | Accent colour (highlights, step labels, click ripples) | `#680BBD` (Miter purple) |
 | `BRAND_DARK` | Background behind the page and captions | `#260F14` (Miter midnight) |
 | `BRAND_LOGO_URL` | https link to a PNG/SVG logo (or commit `brand/logo.svg` or `brand/logo.png`) | `brand/logo.svg` (Miter logo from miter.com) |
+| `BRAND_LOGO_DARK_URL` | Logo for white backgrounds (or commit `brand/logo-dark.svg`) | `brand/logo-dark.svg` |
+| `RECORD_ZOOM` | The app is recorded in a 1920×1080 window zoomed to this factor, for sharp 1080p | `1.5` |
 | `BRAND_TAGLINE` / `BRAND_SUPPORT` | Lines on the intro and closing cards | `Miter Help Center` / support line |
 | `NARRATION` | `on` adds a spoken voiceover (OpenRouter text-to-speech); captions are always on | off |
 | `TTS_MODEL` / `TTS_VOICE` | Voice model and voice | `mistralai/voxtral-mini-tts-3-0` / `en_paul_neutral` |
@@ -106,3 +108,9 @@ Use a test account with demo data: share links are public and videos show whatev
 - **Re-record after app updates:** "Re-record" / "Re-record all" in the dashboard, or
   `POST /videos/rerecord` (body `{}`, `{"status":"approved"}` or `{"slugs":[...]}`) from a deploy hook or schedule.
   Replays saved steps with no Claude cost. If the steps no longer work, the video is flagged in the dashboard.
+
+### Video style
+
+Purple intro card ("How to … in Miter" with the list of steps), full-screen app with a "Step 2 of 4" chip
+top-right and purple caption pills, a pulsing ring around each control before it is clicked, and a white
+"You're all set" closing card with check-your-work chips. Font: Plus Jakarta Sans (bundled via npm).

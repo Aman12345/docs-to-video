@@ -1,110 +1,140 @@
-// Renders the branded graphics as PNGs with headless Chrome (HTML + CSS, so they look polished):
-// intro card, closing card, a title card per chapter, a "Step 2 of 4" label per chapter, and a
-// small logo for the caption band. The composer overlays these on the recording with ffmpeg.
+// The branded graphics, rendered as PNGs with headless Chrome (HTML + CSS) in the chosen Miter style:
+//   intro    — purple, "How to … in Miter", description, and an "In this video" card listing the steps
+//   closing  — white, "You're all set", a recap line and "check your work" chips
+//   chips    — small "Step 1 of 4 · Open Data Studio" pill, top-right while a step plays
+//   captions — purple caption pills, bottom-centre, one per caption line (rendered on demand)
+//   logo     — small Miter logo, bottom-right while the app is on screen
+// Font: Plus Jakarta Sans (bundled from npm, so it renders the same everywhere).
 import { chromium } from 'playwright';
-// Keep the browser alive when the server is asked to stop, so the worker decides what happens to the job.
-const LAUNCH = { handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false };
+import fs from 'node:fs';
 import path from 'node:path';
-import { checksFor } from './narrative.mjs';
+import { createRequire } from 'node:module';
+import { checksFor, displayTitle, recapLine } from './narrative.mjs';
 
+const LAUNCH = { handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false };
+const require = createRequire(import.meta.url);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-const base = (brand, body, { transparent = false } = {}) => `<!doctype html><html><head><meta charset="utf-8"><style>
-*{box-sizing:border-box;margin:0}html,body{width:1920px;height:1080px}
-body{font-family:Inter,"Noto Sans","DejaVu Sans",sans-serif;color:#fff;-webkit-font-smoothing:antialiased;
-${transparent ? 'background:transparent' : `background:radial-gradient(1200px 700px at 78% 18%, ${brand.primary}55, transparent 60%), radial-gradient(900px 600px at 10% 95%, ${brand.primary}33, transparent 60%), ${brand.dark}`}}
-.wordmark{font-weight:800;letter-spacing:-.02em}
-.logo{max-height:84px;max-width:420px;object-fit:contain}
+let fontCss;
+function fonts() {
+  if (fontCss) return fontCss;
+  const dir = path.dirname(require.resolve('@fontsource/plus-jakarta-sans/package.json'));
+  fontCss = [500, 600, 700, 800].map((w) => {
+    const data = fs.readFileSync(path.join(dir, 'files', `plus-jakarta-sans-latin-${w}-normal.woff2`)).toString('base64');
+    return `@font-face{font-family:"Plus Jakarta Sans";font-weight:${w};font-style:normal;src:url(data:font/woff2;base64,${data}) format("woff2")}`;
+  }).join('\n');
+  return fontCss;
+}
+
+const page = (body, { bg = 'transparent' } = {}) => `<!doctype html><html><head><meta charset="utf-8"><style>
+${fonts()}
+*{box-sizing:border-box;margin:0}
+html,body{background:${bg}}
+body{font-family:"Plus Jakarta Sans",sans-serif;-webkit-font-smoothing:antialiased}
 </style></head><body>${body}</body></html>`;
 
-const logoOrName = (brand, size = 64) => brand.logo
-  ? `<img class="logo" style="max-height:${size + 20}px" src="${brand.logo}" alt="">`
-  : `<div class="wordmark" style="font-size:${size}px">${esc(brand.name)}</div>`;
+// Logo in the brand colour of the background: white on purple, dark on white.
+const logo = (brand, h, dark) => (brand.logoDark || brand.logo)
+  ? `<img src="${dark ? brand.logoDark || brand.logo : brand.logo}" style="height:${h}px;width:auto;display:block" alt="">`
+  : `<div style="font-weight:800;font-size:${h}px;color:${dark ? '#1A1523' : '#fff'}">${esc(brand.name)}</div>`;
 
-// Intro: title and description on the left, the list of steps ("In this video") on the right.
-function introHtml(brand, sb) {
+function introHtml(brand, sb, minutesLabel) {
   const n = sb.scenes.length;
-  return base(brand, `<div style="position:absolute;inset:0;padding:110px 140px;display:flex;flex-direction:column;justify-content:space-between">
-    <div style="display:flex;align-items:center;gap:22px">${logoOrName(brand, 52)}<div style="font-size:26px;opacity:.75;padding-left:22px;border-left:2px solid #ffffff40">${esc(brand.tagline)}</div></div>
-    <div style="display:flex;gap:90px;align-items:center">
-      <div style="flex:1.25"><div style="display:inline-block;font-size:24px;font-weight:600;padding:8px 18px;border-radius:999px;background:${brand.primary};margin-bottom:28px">How-to guide &middot; ${n} step${n === 1 ? '' : 's'}</div>
-        <div style="font-size:80px;font-weight:800;line-height:1.05;letter-spacing:-.025em">${esc(sb.title)}</div>
-        ${sb.description ? `<div style="font-size:30px;line-height:1.4;opacity:.8;margin-top:26px">${esc(sb.description)}</div>` : ''}</div>
-      <div style="flex:1;background:#ffffff10;border:1px solid #ffffff26;border-radius:28px;padding:40px 44px">
-        <div style="font-size:24px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.7;margin-bottom:22px">In this video</div>
-        ${sb.scenes.map((sc, i) => `<div style="display:flex;gap:20px;align-items:center;padding:13px 0;${i ? 'border-top:1px solid #ffffff1f;' : ''}font-size:32px;font-weight:600">
-          <span style="flex:none;width:48px;height:48px;border-radius:50%;background:${brand.primary};display:grid;place-items:center;font-size:24px">${i + 1}</span>${esc(sc.chapter)}</div>`).join('')}
-      </div></div>
-    <div style="height:6px;width:220px;border-radius:6px;background:${brand.primary}"></div></div>`);
+  const row = (sc, i) => `<div style="display:flex;align-items:center;gap:21px;padding:16px 0;${i ? 'border-top:1.5px solid #EFE7F8;' : ''}font-size:28px;font-weight:600">
+    <span style="width:45px;height:45px;flex:none;border-radius:50%;background:${brand.primary};color:#fff;display:flex;align-items:center;justify-content:center;font-size:21px;font-weight:700">${i + 1}</span>${esc(sc.chapter)}</div>`;
+  return page(`<div style="width:1920px;height:1080px;padding:90px 120px;background:${brand.primary};color:#fff;display:flex;flex-direction:column;justify-content:space-between">
+  <div style="display:flex;align-items:center;gap:24px">${logo(brand, 45, false)}
+    <span style="font-size:22px;font-weight:600;color:#EADCFB;padding-left:24px;border-left:1.5px solid rgba(255,255,255,.35)">How-to videos</span></div>
+  <div style="display:flex;gap:96px;align-items:center">
+    <div style="flex:1.3;display:flex;flex-direction:column;gap:30px">
+      <p style="font-size:21px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#EADCFB">${esc(sb.category ? `${sb.category} · ` : '')}${n} step${n === 1 ? '' : 's'}</p>
+      <h1 style="font-size:${displayTitle(sb, brand).length > 60 ? 70 : 84}px;line-height:1.08;font-weight:800;letter-spacing:-.02em">${esc(displayTitle(sb, brand))}</h1>
+      ${sb.description ? `<p style="font-size:30px;line-height:1.5;color:#F3EAFE">${esc(sb.description)}</p>` : ''}
+    </div>
+    <div style="flex:1;background:#fff;color:#1A1523;border-radius:30px;padding:42px 48px;display:flex;flex-direction:column">
+      <p style="margin:0 0 15px;font-size:20px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${brand.primary}">In this video</p>
+      ${sb.scenes.slice(0, 6).map(row).join('')}
+    </div>
+  </div>
+  <p style="font-size:22px;color:#EADCFB">${esc(minutesLabel)} · Narrated, with captions</p>
+</div>`);
 }
 
-// Outro: "You're all set", a recap of the steps done, and optional "check your work" points.
-function outroHtml(brand, sb, checks = []) {
-  const tick = (c) => `<svg width="30" height="30" viewBox="0 0 24 24" style="flex:none"><circle cx="12" cy="12" r="12" fill="${c}"/><path d="M6.5 12.5l3.5 3.5 7.5-8" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-  return base(brand, `<div style="position:absolute;inset:0;padding:110px 140px;display:flex;gap:90px;align-items:center">
-    <div style="flex:1">
-      <div style="width:110px;height:110px;border-radius:50%;background:${brand.primary};display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 18px ${brand.primary}33;margin-bottom:44px">
-        <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
-      <div style="font-size:84px;font-weight:800;letter-spacing:-.02em">You're all set</div>
-      <div style="font-size:34px;opacity:.8;margin-top:14px">${esc(sb.title)}</div>
-      <div style="font-size:26px;opacity:.6;margin-top:30px">${esc(brand.support)}</div>
-      <div style="margin-top:50px">${logoOrName(brand, 40)}</div></div>
-    <div style="flex:1;display:flex;flex-direction:column;gap:26px">
-      <div style="background:#ffffff10;border:1px solid #ffffff26;border-radius:28px;padding:36px 42px">
-        <div style="font-size:24px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.7;margin-bottom:16px">What you did</div>
-        ${sb.scenes.map((sc) => `<div style="display:flex;gap:18px;align-items:center;padding:9px 0;font-size:30px;font-weight:600">${tick(brand.primary)}${esc(sc.chapter)}</div>`).join('')}</div>
-      ${checks.length ? `<div style="background:#fff;color:#101828;border-radius:28px;padding:34px 42px">
-        <div style="font-size:24px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${brand.primary};margin-bottom:12px">Check your work</div>
-        ${checks.map((c) => `<div style="display:flex;gap:16px;align-items:flex-start;padding:7px 0;font-size:27px">${tick('#12B76A')}<span>${esc(c)}</span></div>`).join('')}</div>` : ''}
-    </div></div>`);
+function closingHtml(brand, sb) {
+  const checks = checksFor(sb);
+  const chips = (checks.length ? checks : sb.scenes.map((s) => s.chapter)).slice(0, 4);
+  const tick = `<svg width="27" height="27" viewBox="0 0 24 24" style="flex:none"><circle cx="12" cy="12" r="12" fill="${brand.primary}"/><path d="M6.8 12.4l3.3 3.3 7-7.4" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  return page(`<div style="width:1920px;height:1080px;padding:90px 132px;background:#fff;color:#1A1523;display:flex;flex-direction:column;align-items:center;justify-content:space-between;text-align:center">
+  ${logo(brand, 42, true)}
+  <div style="display:flex;flex-direction:column;align-items:center;gap:27px">
+    <div style="width:120px;height:120px;border-radius:50%;background:${brand.primary};display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 21px #F4E9FD">
+      <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+    <h1 style="margin-top:18px;font-size:84px;line-height:1.08;font-weight:800;letter-spacing:-.02em">You're all set</h1>
+    <p style="font-size:30px;line-height:1.5;color:#5F5670;max-width:1400px">${esc(recapLine(sb, brand))}</p>
+  </div>
+  <div style="display:flex;gap:18px;flex-wrap:wrap;justify-content:center;max-width:1650px">
+    ${chips.map((c) => `<span style="display:flex;align-items:center;gap:13px;background:#F7F2FD;border:1.5px solid #E3D5F5;border-radius:999px;padding:13px 27px;font-size:22px;font-weight:600">${tick}${esc(c)}</span>`).join('')}
+  </div>
+  <p style="font-size:22px;color:#6B6280">${esc(brand.support)}</p>
+</div>`, { bg: '#fff' });
 }
 
-// Shown over a blurred frame at the start of each chapter.
-function chapterHtml(brand, i, n, scene) {
-  return base(brand, `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">
-    <div style="background:#fff;color:#101828;border-radius:28px;padding:56px 80px;min-width:900px;max-width:1400px;box-shadow:0 30px 80px rgba(0,0,0,.35);border-top:10px solid ${brand.primary}">
-      <div style="font-size:28px;font-weight:700;color:${brand.primary};letter-spacing:.06em;text-transform:uppercase">Step ${i + 1} of ${n}</div>
-      <div style="font-size:72px;font-weight:800;letter-spacing:-.02em;margin-top:12px">${esc(scene.chapter)}</div>
-      <div style="display:flex;gap:10px;margin-top:30px">${Array.from({ length: n }, (_, k) => `<div style="height:10px;flex:1;border-radius:6px;background:${k <= i ? brand.primary : '#E4E7EC'}"></div>`).join('')}</div>
-    </div></div>`, { transparent: true });
+const chipHtml = (brand, i, n, sc) => page(`<div id="el" style="display:inline-block;padding:16px">
+  <div style="display:flex;align-items:center;gap:18px;background:rgba(255,255,255,.95);border:1.5px solid #E3D5F5;border-radius:999px;padding:10px 24px 10px 10px;box-shadow:0 10px 30px rgba(60,20,110,.14)">
+    <span style="background:${brand.primary};color:#fff;border-radius:999px;padding:7px 18px;font-size:20px;font-weight:700">Step ${i + 1} of ${n}</span>
+    <span style="font-size:23px;font-weight:700;color:#1A1523;white-space:nowrap">${esc(sc.chapter)}</span>
+  </div></div>`);
+
+const captionHtml = (brand, text) => page(`<div id="el" style="display:inline-block;padding:20px 24px 28px">
+  <div style="max-width:1320px;background:${brand.primary};color:#fff;border-radius:24px;padding:21px 39px;font-size:29px;font-weight:600;line-height:1.4;text-align:center;box-shadow:0 14px 36px rgba(60,20,110,.28)">${esc(text)}</div></div>`);
+
+const logoHtml = (brand) => page(`<div id="el" style="display:inline-block;padding:4px;opacity:.85">${logo(brand, 30, true)}</div>`);
+
+// Renders an element-sized PNG (transparent around rounded corners) and returns {file, w, h}.
+async function shotEl(pg, html, file) {
+  await pg.setContent(html, { waitUntil: 'load' });
+  await pg.evaluate(() => document.fonts.ready);
+  const el = pg.locator('#el');
+  const box = await el.boundingBox();
+  await el.screenshot({ path: file, omitBackground: true });
+  return { file, w: Math.round(box.width), h: Math.round(box.height) };
 }
 
-// Small label in the bottom-left of the caption band while a chapter plays (never covers the page).
-function pillHtml(brand, i, n, scene) {
-  return base(brand, `<div style="position:absolute;left:46px;bottom:30px;display:flex;align-items:center;gap:12px;color:#fff;font-size:22px;font-weight:600;max-width:400px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-    <span style="background:${brand.primary};border-radius:999px;padding:4px 14px;font-size:20px">Step ${i + 1}/${n}</span><span style="opacity:.85;overflow:hidden;text-overflow:ellipsis">${esc(scene.chapter)}</span></div>`, { transparent: true });
-}
-
-// Logo in the bottom-right of the caption band.
-function bugHtml(brand) {
-  return base(brand, `<div style="position:absolute;right:46px;bottom:30px;opacity:.85">${brand.logo
-    ? `<img src="${brand.logo}" style="max-height:44px;max-width:220px;object-fit:contain" alt="">`
-    : `<div class="wordmark" style="font-size:34px">${esc(brand.name)}</div>`}</div>`, { transparent: true });
-}
-
-export async function renderCards({ storyboard, brand, outDir }) {
+export async function renderCards({ storyboard, brand, outDir, estimatedSec = 60 }) {
+  const minutes = Math.max(1, Math.round(estimatedSec / 60));
+  const minutesLabel = estimatedSec < 75 ? 'About 1 minute' : `About ${minutes} minutes`;
   const browser = await chromium.launch(LAUNCH);
-  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
-  const shot = async (html, file, transparent) => {
-    await page.setContent(html, { waitUntil: 'load' });
-    await page.evaluate(() => document.fonts.ready);
-    const p = path.join(outDir, file);
-    await page.screenshot({ path: p, omitBackground: transparent });
-    return p;
-  };
+  const pg = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
   try {
+    const full = async (html, file) => {
+      await pg.setContent(html, { waitUntil: 'load' });
+      await pg.evaluate(() => document.fonts.ready);
+      const p = path.join(outDir, file);
+      await pg.screenshot({ path: p });
+      return p;
+    };
     const n = storyboard.scenes.length;
     const cards = {
-      intro: await shot(introHtml(brand, storyboard), 'card-intro.png', false),
-      outro: await shot(outroHtml(brand, storyboard, checksFor(storyboard)), 'card-outro.png', false),
-      bug: await shot(bugHtml(brand), 'card-bug.png', true),
-      chapters: [], pills: [],
+      intro: await full(introHtml(brand, storyboard, minutesLabel), 'card-intro.png'),
+      outro: await full(closingHtml(brand, storyboard), 'card-outro.png'),
+      logo: await shotEl(pg, logoHtml(brand), path.join(outDir, 'card-logo.png')),
+      chips: [],
     };
-    for (const [i, s] of storyboard.scenes.entries()) {
-      cards.chapters.push(await shot(chapterHtml(brand, i, n, s), `card-chapter-${i}.png`, true));
-      cards.pills.push(await shot(pillHtml(brand, i, n, s), `card-pill-${i}.png`, true));
-    }
+    for (const [i, s] of storyboard.scenes.entries()) cards.chips.push(await shotEl(pg, chipHtml(brand, i, n, s), path.join(outDir, `card-chip-${i}.png`)));
     return cards;
+  } finally {
+    await browser.close();
+  }
+}
+
+// Caption pills, one PNG per caption line.
+export async function renderCaptions({ texts, brand, outDir }) {
+  const browser = await chromium.launch(LAUNCH);
+  const pg = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+  try {
+    const out = [];
+    for (const [i, t] of texts.entries()) out.push(await shotEl(pg, captionHtml(brand, t), path.join(outDir, `caption-${i}.png`)));
+    return out;
   } finally {
     await browser.close();
   }

@@ -17,6 +17,7 @@ RUN --mount=type=secret,id=extra_ca,required=false \
 COPY src ./src
 COPY demo-app ./demo-app
 COPY storyboards ./storyboards
+COPY brand ./brand
 
 ENV NODE_ENV=production
 # Render sets PORT for web services. Default = demo mode (page, API and worker in one service).

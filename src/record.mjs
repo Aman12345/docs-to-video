@@ -7,21 +7,24 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { locate, perform, performPageStep } from './locate.mjs';
 
-// Screencast frames match the page's CSS size, so record at 1280x720; compose upscales to 1080p.
-const VIEWPORT = { width: 1280, height: 720 };
-export const CHAPTER_CARD_MS = 1600; // time at the start of each scene reserved for its title card
+// Sharp 1080p: the browser window is 1920x1080 and the app is zoomed to 150%, so it lays out like a
+// 1280x720 screen but is drawn with 1.5x the pixels (screencast frames are captured at window size,
+// so this is native resolution, not an enlarged picture). RECORD_ZOOM=1 turns it off.
+const VIEWPORT = { width: 1920, height: 1080 };
+const ZOOM = Number(process.env.RECORD_ZOOM || 1.5);
+export const CHAPTER_CARD_MS = 700; // short beat at the start of each step while its step chip appears
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export const REDACT_DEFAULTS = ['\\b\\d{3}-\\d{2}-\\d{4}\\b', '\\b\\d{2}-\\d{7}\\b', '\\b\\d{9,17}\\b'];
 
 // Eased glide over ~0.7 s; the cursor's CSS transition smooths the gaps between moves.
-let pos = { x: 640, y: 360 };
-async function glide(page, x, y, steps = 32) {
+let pos = { x: 960, y: 540 };
+async function glide(page, x, y, steps = 36) {
   const from = { ...pos };
   for (let i = 1; i <= steps; i++) {
     const t = i / steps, e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
     await page.mouse.move(from.x + (x - from.x) * e, from.y + (y - from.y) * e);
-    await sleep(14);
+    await sleep(12);
   }
   pos = { x, y };
 }
@@ -34,7 +37,9 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
   const videoPath = path.join(outDir, 'raw.webm');
   const browser = await chromium.launch(LAUNCH); // headless; Render has no display
   const context = await browser.newContext({ viewport: VIEWPORT, ...(storageState ? { storageState } : {}) });
-  await context.addInitScript({ content: `window.__demoBrand = ${JSON.stringify({ primary: brand.primary })};` });
+  await context.addInitScript({ content: `window.__demoBrand = ${JSON.stringify({ primary: brand.primary })}; window.__demoZoom = ${ZOOM};
+    (() => { const z = () => { if (document.documentElement) document.documentElement.style.setProperty('zoom', '${ZOOM}', 'important'); };
+      z(); document.addEventListener('DOMContentLoaded', z); })();` });
   await context.addInitScript({ path: new URL('./cursor.js', import.meta.url).pathname });
   // Blur sensitive numbers (SSNs, EINs, account numbers) before they are recorded. REDACT=off disables;
   // REDACT_PATTERNS='["regex", ...]' replaces the defaults.
@@ -44,10 +49,10 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
   const page = await context.newPage();
   await page.goto(new URL(storyboard.startUrl, baseUrl).toString(), { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(800);
-  pos = { x: 640, y: 360 };
+  pos = { x: VIEWPORT.width / 2, y: VIEWPORT.height / 2 };
   await page.mouse.move(pos.x, pos.y);
 
-  await page.screencast.start({ path: videoPath, size: VIEWPORT, quality: 92 });
+  await page.screencast.start({ path: videoPath, size: VIEWPORT, quality: 95 });
   const t0 = Date.now();
   const now = () => Date.now() - t0;
 
@@ -72,12 +77,14 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
         if (step.do === 'expect') continue; // proves the step reached the right screen
         await loc.scrollIntoViewIfNeeded().catch(() => {});
         const box = await loc.boundingBox();
-        // Glide to the control, ring it, pause a beat, then use it (ripple + bounce happen on click).
+        // Glide to the control, pulse a ring around it for about a second, then use it.
         await glide(page, box.x + box.width / 2, box.y + box.height / 2);
-        if (step.do !== 'press') await page.evaluate(([x, y, w, h]) => window.__demoHighlight?.(x, y, w, h), [box.x, box.y, box.width, box.height]);
-        await sleep(450);
+        const ring = step.do !== 'press';
+        if (ring) await page.evaluate(([x, y, w, h]) => window.__demoHighlight?.(x, y, w, h), [box.x, box.y, box.width, box.height]);
+        await sleep(ring ? 1100 : 300);
         const aStart = now();
         await perform(page, loc, step);
+        if (ring) setTimeout(() => page.evaluate(() => window.__demoHighlightOff?.()).catch(() => {}), 250);
         timeline.actions.push({
           scene: i, do: step.do, zoom: !!step.zoom, start: aStart, end: now() + 900,
           box: { x: box.x, y: box.y, w: box.width, h: box.height },

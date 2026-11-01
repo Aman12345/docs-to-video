@@ -32,9 +32,25 @@ export async function performPageStep(page, step, { waitSlack = 1 } = {}) {
   if (step.do === 'wait') {
     if (!step.text && step.target?.text) step = { ...step, text: step.target.text }; // older plans kept the text here
     const ms = Math.min((Number(step.seconds) || 120) * waitSlack, 900) * 1000;
+    if (!step.text) { await page.waitForTimeout(ms); return true; }
     // Only visible matches count (a hidden copy of the text elsewhere must not block the wait).
-    if (step.text) await page.getByText(step.text, { exact: false }).filter({ visible: true }).first().waitFor({ state: 'visible', timeout: ms });
-    else await page.waitForTimeout(ms);
+    const matches = page.getByText(step.text, { exact: false }).filter({ visible: true });
+    if (step.gone) {
+      // Wait until a busy label ("Working", "Building…") has disappeared.
+      await matches.first().waitFor({ state: 'hidden', timeout: ms });
+    } else {
+      // Wait for a NEW occurrence: if the text is already on screen (e.g. an earlier "Worked for 2 min"
+      // from Miter AI's planning), wait until one more appears, so we don't stop before the work is done.
+      const before = await matches.count();
+      if (before === 0) await matches.first().waitFor({ state: 'visible', timeout: ms });
+      else {
+        const t0 = Date.now();
+        while ((await matches.count()) <= before) {
+          if (Date.now() - t0 > ms) throw new Error(`Waited ${Math.round(ms / 1000)}s for another "${step.text}" to appear.`);
+          await page.waitForTimeout(1000);
+        }
+      }
+    }
     await page.waitForTimeout(800);
     return true;
   }

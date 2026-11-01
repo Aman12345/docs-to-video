@@ -20,7 +20,7 @@ export async function makeVideo({ storyboard, baseUrl, jobId, storageState, log 
     let t = Date.now();
     // Voice first, so the recorder holds each scene long enough for its sentence.
     // Spoken intro (what you'll learn + the steps), one line per scene, and a closing recap.
-    const intro = introText(storyboard), outro = outroText(storyboard);
+    const intro = introText(storyboard, brand), outro = outroText(storyboard, brand);
     const texts = [intro, ...storyboard.scenes.map((s) => s.narration || ''), outro];
     const clips = await synthesizeVoice(texts, workDir, log);
     const voiced = clips.length === texts.length;
@@ -33,7 +33,8 @@ export async function makeVideo({ storyboard, baseUrl, jobId, storageState, log 
     log(`recorded ${timeline.scenes.length} scenes in ${secs(t)}s`);
     timings.recordSec = +secs(t);
     t = Date.now();
-    const cards = await renderCards({ storyboard, brand, outDir: workDir });
+    const cutMs = (timeline.cuts || []).reduce((n, c) => n + c.end - c.start, 0);
+    const cards = await renderCards({ storyboard, brand, outDir: workDir, estimatedSec: (timeline.scenes.at(-1).end - cutMs) / 1000 + 12 });
     const composed = await compose({ rawPath: videoPath, timeline, outDir: workDir, brand, cards, voice, storyboard,
       introVoice: voiced ? clips[0] : null, outroVoice: voiced ? clips.at(-1) : null, introText: intro, outroText: outro });
     timings.composeSec = +secs(t);

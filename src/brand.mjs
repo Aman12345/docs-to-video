@@ -13,8 +13,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 let cached;
 
-async function logoDataUri() {
-  const url = process.env.BRAND_LOGO_URL;
+async function logoDataUri(variant = '') {
+  const url = variant ? process.env.BRAND_LOGO_DARK_URL : process.env.BRAND_LOGO_URL;
   try {
     if (url) {
       const res = await fetch(url);
@@ -22,7 +22,7 @@ async function logoDataUri() {
       const type = res.headers.get('content-type') || (url.endsWith('.svg') ? 'image/svg+xml' : 'image/png');
       return `data:${type};base64,${Buffer.from(await res.arrayBuffer()).toString('base64')}`;
     }
-    for (const [file, type] of [['brand/logo.svg', 'image/svg+xml'], ['brand/logo.png', 'image/png']]) {
+    for (const [file, type] of [[`brand/logo${variant}.svg`, 'image/svg+xml'], [`brand/logo${variant}.png`, 'image/png']]) {
       const buf = await fs.readFile(path.join(ROOT, file)).catch(() => null);
       if (buf) return `data:${type};base64,${buf.toString('base64')}`;
     }
@@ -40,8 +40,9 @@ export async function getBrand() {
     primary: hex(process.env.BRAND_PRIMARY, '#680BBD'),
     dark: hex(process.env.BRAND_DARK, '#260F14'),
     tagline: process.env.BRAND_TAGLINE || `${process.env.BRAND_NAME || 'Miter'} Help Center`,
-    support: process.env.BRAND_SUPPORT || 'Questions? Reach out to our support team.',
-    logo: await logoDataUri(),
+    support: process.env.BRAND_SUPPORT || `Questions? Ask ${process.env.BRAND_NAME || 'Miter'} AI or reach out to ${process.env.BRAND_NAME || 'Miter'} support.`,
+    logo: await logoDataUri(), // for purple / dark backgrounds
+    logoDark: await logoDataUri('-dark'), // for white backgrounds (brand/logo-dark.svg or BRAND_LOGO_DARK_URL)
   };
   return cached;
 }
