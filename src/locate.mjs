@@ -20,7 +20,8 @@ export async function perform(page, loc, step, { timeout } = {}) {
   const o = timeout ? { timeout } : {};
   if (step.do === 'click') await loc.click(o);
   else if (step.do === 'fill' && step.value === '') await loc.fill('', o);
-  else if (step.do === 'fill') { await loc.click(o); await loc.fill('', o); await loc.pressSequentially(step.value, { delay: 70, ...o }); }
+  // Typing takes ~70 ms a character (more on a busy server), so it gets extra time on top of the timeout.
+  else if (step.do === 'fill') { await loc.click(o); await loc.fill('', o); await loc.pressSequentially(step.value, { delay: 70, ...(timeout ? { timeout: timeout + String(step.value).length * 250 } : {}) }); }
   else if (step.do === 'select') await loc.selectOption({ label: step.value }, o);
   else if (step.do === 'press') await loc.press(step.key || 'Enter', o);
   else if (step.do === 'hover') await loc.hover(o);
