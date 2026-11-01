@@ -85,7 +85,10 @@ ${jobs.map((j) => {
   const steps = j.storyboard && j.type === 'prompt' ? ` &middot; <a href="/ui/jobs/${j._id}/storyboard">view steps</a>` : '';
   const result = j.status === 'done' ? `v${j.result?.version}, ${(j.result?.sizeBytes / 1e6).toFixed(1)} MB${cost}${steps}`
     : j.status === 'planned' ? `planned${cost}${steps} <form method="post" action="/ui/record/${j._id}" style="display:inline"><button class="ghost" style="padding:3px 10px;margin-left:6px">Record it</button></form>`
-    : j.status === 'failed' ? `${esc((j.error || '').split('\n')[0].slice(0, 160))} <form method="post" action="/ui/retry/${j._id}" style="display:inline"><button class="ghost" style="padding:3px 10px;margin-left:6px">Retry</button></form>`
+    : j.status === 'failed' ? `${esc((j.error || '').split('\n')[0].slice(0, 160))} ${/^Claude stopped/.test(j.error || '')
+      // Claude stopped on purpose (robot check, bot block, login wall): retrying would hit the same wall.
+      ? '<span class="meta" style="margin-left:6px">This site blocks automated browsers, so retrying won\'t help. Try a different site.</span>'
+      : `<form method="post" action="/ui/retry/${j._id}" style="display:inline"><button class="ghost" style="padding:3px 10px;margin-left:6px">Retry</button></form>`}`
     : j.status === 'running' ? `${j.stage === 'planning' ? 'Claude is planning the steps...' : 'recording...'}` : '';
   return `<tr><td>${esc(j.storyboard?.title || j.prompt)}${j.type === 'prompt' ? ' <span class="meta">(from prompt)</span>' : ''}</td><td>${statusPill(j.status)}</td><td class="meta">${ago(j.createdAt)}</td><td class="meta">${result}</td></tr>`;
 }).join('')}
