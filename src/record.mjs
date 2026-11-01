@@ -43,13 +43,22 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
   const t0 = Date.now();
   const now = () => Date.now() - t0;
 
-  const timeline = { width: VIEWPORT.width, height: VIEWPORT.height, scenes: [], actions: [] };
+  // cuts: long waits (e.g. Miter AI building a report) that compose trims out of the final video.
+  const timeline = { width: VIEWPORT.width, height: VIEWPORT.height, scenes: [], actions: [], cuts: [] };
   try {
     for (const [i, scene] of storyboard.scenes.entries()) {
       const start = now();
+      let skipped = 0; // ms of this scene that will be trimmed out
       await sleep(CHAPTER_CARD_MS); // the branded chapter card is overlaid here during compose
       for (const step of scene.steps) {
-        if (await performPageStep(page, step)) { await sleep(400); continue; }
+        const w0 = now();
+        if (await performPageStep(page, step)) {
+          const w1 = now();
+          // Keep ~2 s of the wait at each end so viewers see it working, and trim the middle.
+          if (step.do === 'wait' && w1 - w0 > 7000) { timeline.cuts.push({ start: w0 + 2500, end: w1 - 2000 }); skipped += w1 - w0 - 4500; }
+          await sleep(400);
+          continue;
+        }
         const loc = locate(page, step.target, step.label);
         await loc.waitFor({ state: 'visible', timeout: 10_000 });
         if (step.do === 'expect') continue; // proves the step reached the right screen
@@ -68,7 +77,7 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
         await sleep(900);
       }
       const last = i === storyboard.scenes.length - 1;
-      const left = sceneMinMs(scene.narration, voiceMs[i]) + (last ? 1200 : 0) - (now() - start);
+      const left = sceneMinMs(scene.narration, voiceMs[i]) + (last ? 1200 : 0) - (now() - start - skipped);
       if (left > 0) await sleep(left);
       timeline.scenes.push({ chapter: scene.chapter, narration: scene.narration, start, end: now() });
     }

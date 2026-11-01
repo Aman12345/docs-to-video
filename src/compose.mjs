@@ -3,6 +3,7 @@
 //   logo in the caption band, captions, voiceover) -> closing card, plus MP4 chapter markers.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { ffColor } from './brand.mjs';
 import { CHAPTER_CARD_MS } from './record.mjs';
@@ -83,7 +84,29 @@ function zoomFilter(timeline) {
   return `scale=${ZOOM_SRC.width}:${ZOOM_SRC.height}:flags=bicubic,zoompan=z='${z}':x='${x}':y='${y}':d=1:fps=${FPS}:s=${FRAME.width}x${FRAME.height}`;
 }
 
-export async function compose({ rawPath, timeline, outDir, brand, cards, voice = [], storyboard }) {
+// Long waits are cut out: shift every later time back by the trimmed amount.
+function applyCuts(tl) {
+  const cuts = (tl.cuts || []).filter((c) => c.end > c.start).sort((a, b) => a.start - b.start);
+  if (!cuts.length) return { timeline: tl, cuts: [], select: '' };
+  const map = (t) => t - cuts.reduce((n, c) => n + (t >= c.end ? c.end - c.start : t > c.start ? t - c.start : 0), 0);
+  const timeline = {
+    ...tl,
+    scenes: tl.scenes.map((s) => ({ ...s, start: map(s.start), end: map(s.end) })),
+    actions: tl.actions.map((a) => ({ ...a, start: map(a.start), end: map(a.end) })),
+  };
+  const keep = `not(${cuts.map((c) => `between(t,${(c.start / 1000).toFixed(3)},${(c.end / 1000).toFixed(3)})`).join('+')})`;
+  return {
+    timeline,
+    cuts: cuts.map((c) => ({ at: map(c.start) / 1000, skippedSec: (c.end - c.start) / 1000 })),
+    select: `select='${keep}',setpts=N/${FPS}/TB,`,
+  };
+}
+
+const laterText = (sec) => (sec >= 90 ? `About ${Math.round(sec / 60)} minutes later` : `${Math.round(sec / 5) * 5} seconds later`);
+const INTER = '/usr/share/fonts/opentype/inter/Inter-SemiBold.otf';
+
+export async function compose({ rawPath, timeline: rawTimeline, outDir, brand, cards, voice = [], storyboard }) {
+  const { timeline, cuts, select } = applyCuts(rawTimeline);
   const rawDur = timeline.scenes.at(-1).end / 1000 + 0.4;
   const total = INTRO + rawDur + OUTRO;
   const card = CHAPTER_CARD_MS / 1000;
@@ -122,9 +145,13 @@ export async function compose({ rawPath, timeline, outDir, brand, cards, voice =
   // Video graph.
   const blur = scenes.map((s) => `between(t,${s.a.toFixed(3)},${(s.a + card).toFixed(3)})`).join('+');
   const g = [
-    `[0:v]fps=${FPS},${zoomFilter(timeline)},boxblur=luma_radius=14:luma_power=2:enable='${blur}',`
+    `[0:v]fps=${FPS},${select}${zoomFilter(timeline)},boxblur=luma_radius=14:luma_power=2:enable='${blur}',`
     + `pad=${OUT.width}:${OUT.height}:${FRAME.x}:${FRAME.y}:color=${ffColor(brand.dark)},`
-    + `tpad=start_duration=${INTRO}:start_mode=clone:stop_duration=${OUTRO}:stop_mode=clone[v0]`,
+    + `tpad=start_duration=${INTRO}:start_mode=clone:stop_duration=${OUTRO}:stop_mode=clone`
+    // "About 3 minutes later" label where a long wait was trimmed.
+    + cuts.map((c) => `,drawtext=${existsSync(INTER) ? `fontfile=${INTER}` : 'font=Inter'}:text='${laterText(c.skippedSec)}':fontsize=40:fontcolor=white:`
+      + `box=1:boxcolor=${ffColor(brand.primary)}@0.92:boxborderw=22:x=(w-tw)/2:y=${FRAME.y + 60}:enable='between(t,${(INTRO + c.at).toFixed(3)},${(INTRO + c.at + 2.6).toFixed(3)})'`).join('')
+    + '[v0]',
   ];
   overlays.forEach((o, i) => {
     const fades = [o.fadeIn ? `fade=t=in:st=0:d=${o.fadeIn}:alpha=1` : null, o.fadeOut ? `fade=t=out:st=${(o.dur - o.fadeOut).toFixed(3)}:d=${o.fadeOut}:alpha=1` : null].filter(Boolean);

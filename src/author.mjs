@@ -16,11 +16,12 @@ Each turn you see the current URL, page title, the actions taken so far, and an 
 snapshot of the page (YAML lines like: - button "Search", - link "Billing", - textbox "Email").
 
 Reply with ONLY one JSON object describing the single next action:
-{"do": "click" | "fill" | "select" | "press" | "goto" | "scroll" | "done" | "fail",
+{"do": "click" | "fill" | "select" | "press" | "goto" | "scroll" | "wait" | "done" | "fail",
  "target": {"role": "button", "name": "Search"},   // or {"label": ...}, {"placeholder": ...}, {"text": ...}
  "value": "text to type (fill) or option label (select)",
  "key": "Enter",          // for press
  "url": "https://...",    // for goto
+ "text": "Worked for", "seconds": 300,   // for wait: text that appears only once the work is finished
  "why": "short reason",
  "narration": "one short, friendly sentence a narrator says to the viewer for this step"}
 
@@ -29,6 +30,8 @@ Rules:
   the same role and name, add "nth": 0 (or the right index).
 - One action per reply. Keep the video short: reach the goal in as few actions as possible.
 - Reply {"do":"done"} as soon as the goal is visibly achieved on screen.
+- If the app is busy (a spinner, "Working", "Generating", "Building"), use "wait" with text that only appears
+  once it has finished, and enough seconds (up to 600). Long waits are trimmed out of the final video.
 - Reply {"do":"fail","why":"..."} if you are blocked: a CAPTCHA or "are you a robot" check, a login
   wall, or the site refuses. Never try to get around such checks.
 - Never type passwords, payment details or personal information, and never place an order or
@@ -82,7 +85,7 @@ async function snapshot(page) {
   return snap.length > SNAPSHOT_CHARS ? `${snap.slice(0, SNAPSHOT_CHARS)}\n... (truncated)` : snap;
 }
 
-const describe = (a) => `${a.do} ${a.target ? JSON.stringify(a.target) : a.url || a.key || ''}${a.value ? ` value="${a.value}"` : ''}`;
+const describe = (a) => `${a.do} ${a.target ? JSON.stringify(a.target) : a.url || a.key || (a.text ? `until "${a.text}" (${a.seconds || 120}s max)` : '')}${a.value ? ` value="${a.value}"` : ''}`;
 
 const slugify = (s) => String(s || 'video').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || 'video';
 
@@ -114,7 +117,7 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
       if (reply.do === 'done') { log(`plan: done after ${actions.length} actions`); break; }
       if (reply.do === 'fail') throw new Error(`Claude stopped: ${reply.why || 'blocked'}`);
 
-      const step = { do: reply.do, target: reply.target, value: reply.value, key: reply.key, url: reply.url, narration: reply.narration };
+      const step = { do: reply.do, target: reply.target, value: reply.value, key: reply.key, url: reply.url, text: reply.text, seconds: reply.seconds, narration: reply.narration };
       try {
         if (!(await performPageStep(page, step))) {
           if (!step.target) throw new Error('No target given for this action.');
@@ -179,6 +182,7 @@ function toStep(a) {
   if (a.value !== undefined && a.value !== null) s.value = String(a.value);
   if (a.key) s.key = a.key;
   if (a.url) s.url = a.url;
+  if (a.do === 'wait') { if (a.text) s.text = String(a.text); s.seconds = Math.min(Number(a.seconds) || 120, 600); }
   if (['click', 'fill', 'select', 'press'].includes(a.do)) s.zoom = a.do !== 'press';
   return s;
 }

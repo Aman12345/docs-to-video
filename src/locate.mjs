@@ -28,6 +28,14 @@ export async function perform(page, loc, step) {
 // Steps that don't act on one element.
 export async function performPageStep(page, step) {
   if (step.do === 'pause') { await page.waitForTimeout(step.ms || 1000); return true; }
+  // Wait for slow work in the app (e.g. Miter AI building a report) until some text shows it's finished.
+  if (step.do === 'wait') {
+    const ms = Math.min(Number(step.seconds) || 120, 600) * 1000;
+    if (step.text) await page.getByText(step.text, { exact: false }).first().waitFor({ state: 'visible', timeout: ms });
+    else await page.waitForTimeout(ms);
+    await page.waitForTimeout(800);
+    return true;
+  }
   if (step.do === 'goto') { await page.goto(step.url, { waitUntil: 'domcontentloaded' }); return true; }
   if (step.do === 'scroll') { await page.mouse.wheel(0, step.dy || 500); await page.waitForTimeout(400); return true; }
   return false;
