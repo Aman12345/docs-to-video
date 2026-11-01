@@ -1,7 +1,7 @@
 // A small web page for the demo: pick a storyboard, click "Make video", watch the job,
 // play and approve the result. Protected with a password when DEMO_PASSWORD is set.
 import { authorModel, repairModel, chat, parseJson, newUsage } from './ai.mjs';
-import { SETTINGS, setting, saveSettings, poolForNewJob } from './settings.mjs';
+import { SETTINGS, setting, saveSettings, poolForNewJob, guidelines, addGuideline, removeGuideline } from './settings.mjs';
 import { RUNNERS, kickRunners, githubReady } from './runners.mjs';
 import crypto from 'node:crypto';
 import { VOICES, defaultVoice, isVoice, perVideo } from './voices.mjs';
@@ -116,23 +116,25 @@ function reviewPage(v, { msg } = {}) {
 .step.flagged{border-color:#fda29b}.step h3{margin:0 0 6px;font-size:16px}.step p{margin:0 0 6px}.finding{color:#b42318}.shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
 figure{margin:0}figure img{width:100%;border-radius:8px;border:1px solid #e4e7ec}figcaption{font-size:12px;color:#667085}
 .actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}textarea{width:100%;min-height:80px;font:inherit;padding:8px 10px;border:1px solid #d0d5dd;border-radius:8px}
-button{font:inherit;font-weight:600;border-radius:8px;padding:9px 16px;cursor:pointer;border:1px solid #d0d5dd;background:#fff}.approve{background:#067647;color:#fff;border-color:#067647}.changes{background:#680BBD;color:#fff;border-color:#680BBD}.reject{color:#b42318}
+button{font:inherit;font-weight:600;border-radius:8px;padding:9px 16px;cursor:pointer;border:1px solid #d0d5dd;background:#fff}.approve{background:#067647;color:#fff;border-color:#067647}.use{font-size:12px;padding:3px 9px;margin-left:4px}.changes{background:#680BBD;color:#fff;border-color:#680BBD}.reject{color:#b42318}
 .ok{background:#ecfdf3;border:1px solid #abefc6;color:#067647;padding:10px 14px;border-radius:8px;margin-bottom:14px}@media (max-width:720px){.step{grid-template-columns:1fr}}</style></head><body><main>
 <p class="meta"><a href="/">← Dashboard</a></p><h1>${esc(v.title)}</h1>
 <div class="meta">Draft v${v.version}${v.live ? ` · live is v${v.live.version} (approved ${v.live.approvedBy === 'auto' ? 'automatically' : `by ${esc(v.live.approvedBy || 'someone')}`})` : ' · new video, nothing live yet'}</div>
 ${msg ? `<div class="ok" style="margin-top:12px">${esc(msg)}</div>` : ''}
 <section class="card" style="margin-top:14px"><div class="verdict" style="background:${verdict[0]};color:${verdict[1]}">${verdict[2]}</div>
 ${r.fixes?.length ? `<p class="meta">Fixed automatically before you saw it: ${esc(r.fixes.join(' '))}</p>` : ''}
-${(r.findings || []).length ? `<ul>${r.findings.map((x) => `<li>Step ${x.step}: <strong>${esc(REVIEW_CODES[x.code] || x.code)}</strong>: ${esc(x.note)}</li>`).join('')}</ul>` : ''}
+${(r.findings || []).length ? `<ul>${r.findings.map((x) => `<li>Step ${x.step}: <strong>${esc(REVIEW_CODES[x.code] || x.code)}</strong>: ${esc(x.note)}${x.suggestion ? `<br><span class="meta">Suggested change: "${esc(x.suggestion)}"</span> <button type="button" class="use" data-s="${esc(x.suggestion)}">Use this</button>` : ''}</li>`).join('')}</ul>` : ''}
 ${v.reviewNote ? `<p class="meta">Last change request: "${esc(v.reviewNote.note)}" → ${esc(v.reviewNote.summary || '')}</p>` : ''}</section>
 <section class="card"><div class="vids"><div><strong>New (v${v.version})</strong><video controls preload="metadata" src="/ui/review/${esc(v.slug)}/video?v=${v.version}"></video></div>
 ${v.live ? `<div><strong>Live now (v${v.live.version})</strong><video controls preload="metadata" src="/videos/${esc(v.slug)}/video?v=${v.live.version}"></video></div>` : ''}</div></section>
 <h2 style="font-size:17px">Step by step</h2>${scenes.map(step).join('')}
 <section class="card"><h2 style="font-size:17px;margin-top:0">Your decision</h2><div class="actions">
 <form method="post" action="/ui/review/${esc(v.slug)}/approve"><p>Make v${v.version} the live version: share links and the support agent use it from now on.</p><button class="approve">Approve v${v.version}</button></form>
-<form method="post" action="/ui/review/${esc(v.slug)}/changes"><p>Describe what to change. The AI updates the narration, titles or typed example values, then it's re-recorded and comes back here.</p><textarea name="note" required placeholder="e.g. Say 'Choose a team member' instead of 'Select Jared', and use $85.00 as the amount"></textarea><button class="changes">Request changes</button></form>
+<form method="post" action="/ui/review/${esc(v.slug)}/changes"><p>Describe what to change. Wording and example values are edited directly; if it needs different or extra steps (e.g. "show the other approver options"), the AI plans the video again with your feedback. Either way it comes back here.</p><textarea id="note" name="note" required placeholder="e.g. Show the approver options and briefly say when to use each, then pick Direct manager"></textarea>
+<label class="meta" style="display:flex;gap:6px;align-items:center;margin:6px 0"><input type="checkbox" name="remember" value="1"> Also remember this for future videos (adds a team guideline)</label><button class="changes">Request changes</button></form>
 <form method="post" action="/ui/review/${esc(v.slug)}/reject"><p>Don't use v${v.version}.${v.live ? ` v${v.live.version} stays live.` : ''}</p><button class="reject">Reject v${v.version}</button></form>
-</div></section></main></body></html>`;
+</div></section></main>
+<script>for (const b of document.querySelectorAll('.use')) b.onclick = () => { const t = document.getElementById('note'); t.value = b.dataset.s; t.scrollIntoView({ behavior: 'smooth', block: 'center' }); t.focus(); };</script></body></html>`;
 }
 
 // ---- Job activity: what a job did, step by step ----
@@ -263,7 +265,12 @@ ${msg ? `<div class="ok">${esc(msg)}</div>` : ''}${err ? `<div class="err">${esc
 <span class="price">Preselected in the request forms; you can still pick another voice per video. In use: <strong>${esc(defaultVoice().label)}</strong>. <a href="/ui/voices">Listen to the voices</a></span>
 </section>
 <button type="submit">Save settings</button>
-</form></main></body></html>`;
+</form>
+<section class="card" style="margin-top:16px"><h2>Team guidelines</h2>
+<p class="meta" style="margin-top:0">Rules every new video follows, and the AI review checks. They come from reviewers' feedback ("Also remember this for future videos" on the review page), or add your own.</p>
+${guidelines().length ? `<ol style="padding-left:20px">${guidelines().map((g, i) => `<li style="margin-bottom:6px">${esc(g.text)} <span class="meta">(${esc(g.by || '')})</span> <form method="post" action="/ui/guidelines/remove/${i}" style="display:inline"><button style="font-size:12px;padding:2px 8px;background:#fff;color:#b42318;border:1px solid #fecdca">Remove</button></form></li>`).join('')}</ol>` : '<p class="meta">None yet.</p>'}
+<form method="post" action="/ui/guidelines/add"><label for="g">Add a guideline</label><input id="g" name="text" placeholder="e.g. When a setting has several options, show them and briefly say what each is for." maxlength="300"><button type="submit" style="margin-top:8px">Add</button></form></section>
+</main></body></html>`;
 }
 
 // Voice dropdown for the request forms; the service default is preselected.
@@ -584,6 +591,14 @@ export async function handleDashboard(db, req, res, url) {
     else res.writeHead(502, { 'Content-Type': 'text/plain' }).end(hit.body);
     return true;
   }
+  if (req.method === 'POST' && p === '/ui/guidelines/add') {
+    await addGuideline(db, (await readForm(req)).text, userOf(req));
+    return redirect(res, '/ui/settings');
+  }
+  if (req.method === 'POST' && p.startsWith('/ui/guidelines/remove/')) {
+    await removeGuideline(db, Number(p.split('/')[4]));
+    return redirect(res, '/ui/settings');
+  }
   if (p === '/ui/settings') {
     const models = await openRouterModels();
     if (req.method === 'POST') {
@@ -680,7 +695,8 @@ ${rows.map(card).join('')}</main></body></html>`);
       return redirect(res, `/?msg=${encodeURIComponent(`Rejected v${v.version} of "${v.title}".${v.live ? ` v${v.live.version} stays live.` : ''}`)}`);
     }
     if (req.method === 'POST' && action === 'changes') {
-      const note = ((await readForm(req)).note || '').trim().slice(0, 1000);
+      const form = await readForm(req);
+      const note = (form.note || '').trim().slice(0, 1000);
       if (!note || !v.storyboard) return redirect(res, `/ui/review/${encodeURIComponent(slug)}`);
       const usage = newUsage(repairModel());
       let revised;
@@ -688,11 +704,26 @@ ${rows.map(card).join('')}</main></body></html>`);
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(reviewPage(v, { msg: `The AI couldn't apply that change: ${e.message.slice(0, 200)}` }));
         return true;
       }
-      await db.collection('jobs').insertOne({ status: 'queued', storyboard: revised.storyboard, rerecordOf: slug, requestedChanges: note, attempts: 0, createdAt: new Date(), source: 'review',
-        planUsage: { costUsd: usage.costUsd, calls: usage.calls, model: usage.model }, ...poolForNewJob() });
+      // "Remember for future videos": the general version of the request becomes a team guideline.
+      const remembered = form.remember === '1' && revised.rule ? await addGuideline(db, revised.rule, userOf(req)) : false;
+      const base = { rerecordOf: slug, requestedChanges: note, attempts: 0, createdAt: new Date(), source: 'review', planUsage: { costUsd: usage.costUsd, calls: usage.calls, model: usage.model }, ...poolForNewJob() };
+      let summary;
+      if (revised.replan) {
+        // Needs different steps: plan the video again from its original request plus the feedback.
+        const sb = v.storyboard;
+        const basePrompt = sb.prompt || sb.title;
+        const prev = sb.scenes.map((s, i) => `${i + 1}. ${s.chapter}: ${s.narration || ''}`).join('\n');
+        await db.collection('jobs').insertOne({ ...base, type: 'prompt', status: 'queued', slug, basePrompt,
+          prompt: `${basePrompt}\n\nThis is a new version of an existing video. A reviewer asked for: "${note}"\nThe previous version had these steps:\n${prev}\nKeep what worked and make the change the reviewer asked for.`,
+          startUrl: sb.startUrl || '/', ...(sb.login ? { login: sb.login } : {}), ...(sb.voice ? { voice: sb.voice } : {}) });
+        summary = `The AI will plan the video again with your feedback (${revised.reason}).`;
+      } else {
+        await db.collection('jobs').insertOne({ ...base, status: 'queued', storyboard: revised.storyboard });
+        summary = `${revised.summary} It's being re-recorded.`;
+      }
       await kickRunners(db).catch(() => {});
-      await db.collection('videos').updateOne({ slug }, { $set: { status: 'changes-requested', reviewNote: { note, summary: revised.summary, at: new Date(), by: userOf(req) } } });
-      return redirect(res, `/?msg=${encodeURIComponent(`Changes requested: ${revised.summary} It's being re-recorded and will come back for review.`)}`);
+      await db.collection('videos').updateOne({ slug }, { $set: { status: 'changes-requested', reviewNote: { note, summary, replan: !!revised.replan, at: new Date(), by: userOf(req) } } });
+      return redirect(res, `/?msg=${encodeURIComponent(`Changes requested: ${summary} It will come back for review.${remembered ? ` Saved as a team guideline: "${revised.rule}"` : ''}`)}`);
     }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }).end(reviewPage(v));
     return true;

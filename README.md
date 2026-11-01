@@ -193,6 +193,16 @@ A new recording is a draft until it's approved, so an unchecked video never repl
    **Approve**, **Request changes** (the AI applies the note to narration, titles or typed values, then
    it's re-recorded and comes back) or **Reject** (the live version stays).
 
+Smarter videos from feedback:
+- Planning shows choices instead of hiding them: for a list of options (approver type, policy rule) it opens
+  the list, pauses so viewers can read it, names the main options and when to use each, then picks one.
+- The AI review also reports **missing-context** (e.g. picked one option as if it were the only one) with a
+  suggested change; the review page has "Use this" to turn it into a change request.
+- **Request changes** edits wording and typed values directly, or, when the request needs different or extra
+  steps, plans the video again from its original request plus the feedback (same video, new version).
+- **Team guidelines**: tick "Also remember this for future videos" and the general version of the request is
+  saved; planning and the AI review follow every guideline. Manage them on the Settings page.
+
 Both are switchable on the Settings page (AI review, auto-approval).
 
 ### AI takeover when a step stops working

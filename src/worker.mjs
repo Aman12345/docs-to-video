@@ -101,6 +101,9 @@ export async function startWorker() {
           storyboard = plan.storyboard;
           if (loginName) storyboard.login = loginName;
           if (job.voice) storyboard.voice = job.voice;
+          // A re-plan from the review page: it's a new version of the same video, with the original request kept.
+          if (job.slug) storyboard.id = job.slug;
+          if (job.basePrompt) storyboard.prompt = job.basePrompt;
           await jobs.updateOne({ _id: job._id }, { $set: { storyboard, planUsage: plan.usage } });
           if (job.planOnly) {
             const cost = costOf({ planUsd: plan.usage.costUsd, serverSec: (Date.now() - jobStart) / 1000 });

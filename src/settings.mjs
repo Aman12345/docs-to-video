@@ -15,11 +15,28 @@ export const SETTINGS = {
 };
 
 let saved = {};
+let guides = []; // team guidelines: rules learned from reviewers' feedback, used when planning and reviewing
 
 export async function loadSettings(db) {
   const doc = await db.collection('settings').findOne({ _id: 'app' }).catch(() => null);
   saved = doc?.values || {};
+  guides = Array.isArray(doc?.guidelines) ? doc.guidelines : [];
   return saved;
+}
+
+export const guidelines = () => guides;
+export const guidelinesText = (heading = 'Team guidelines (from reviewers of earlier videos). Follow them:') =>
+  (guides.length ? `\n\n${heading}\n${guides.map((g) => `- ${g.text}`).join('\n')}` : '');
+export async function addGuideline(db, text, by = 'someone') {
+  const t = String(text || '').trim().slice(0, 300);
+  if (!t || guides.some((g) => g.text.toLowerCase() === t.toLowerCase())) return false;
+  guides = [...guides, { text: t, by, at: new Date() }].slice(-30);
+  await db.collection('settings').updateOne({ _id: 'app' }, { $set: { guidelines: guides } }, { upsert: true });
+  return true;
+}
+export async function removeGuideline(db, i) {
+  guides = guides.filter((_, k) => k !== i);
+  await db.collection('settings').updateOne({ _id: 'app' }, { $set: { guidelines: guides } }, { upsert: true });
 }
 
 export async function saveSettings(db, values) {

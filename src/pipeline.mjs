@@ -11,7 +11,7 @@ import { voiceById } from './voices.mjs';
 import { isCheck } from './check.mjs';
 import { get } from './settings.mjs';
 import { getDb, ensureIndexes, saveVideo, closeDb, downloadFile } from './store.mjs';
-import { reviewVideo, rewriteNarration, compareSteps } from './review.mjs';
+import { reviewVideo, rewriteNarration, compareSteps, NEEDS_PERSON } from './review.mjs';
 import { newUsage, repairModel } from './ai.mjs';
 import { SCRIPT_RULES } from './author.mjs';
 import { startDemoApp } from './demo-server.mjs';
@@ -129,7 +129,7 @@ export async function makeVideo({ storyboard, baseUrl, jobId, storageState, log 
         for (let round = 0; ; round++) {
           findings = await reviewVideo({ storyboard, stepFrames: composed.stepFrames, outDir: workDir, usage, log });
           reviewed = true;
-          const fixable = findings.filter((f) => f.code !== 'sensitive-data');
+          const fixable = findings.filter((f) => !NEEDS_PERSON.includes(f.code));
           if (!fixable.length || round >= 2) break;
           log(`AI review round ${round + 1}: fixing ${fixable.length} problem(s)`);
           let reRecord = false, slow = false, checkNote;

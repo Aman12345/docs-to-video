@@ -85,6 +85,7 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
       return;
     }
     if (!step.target) throw new Error(`The "${step.do}" step has no target.`);
+    await page.evaluate(() => window.__demoHighlightOff?.(true)).catch(() => {}); // no leftover ring from a previous step
     const loc = locate(page, step.target, step.label);
     await loc.waitFor({ state: 'visible', timeout: 10_000 });
     if (step.do === 'expect') return; // proves the step reached the right screen
@@ -101,7 +102,7 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
       const cx = Math.min(box.x + box.width - 30, VIEWPORT.width - 30);
       const cy = below ? box.y + box.height + 16 : Math.max(box.y + 10, 10);
       await glide(page, cx, cy);
-      await page.evaluate(([x, y, w, h]) => window.__demoHighlight?.(x, y, w, h), [box.x, box.y, box.width, box.height]);
+      await page.evaluate(([x, y, w, h]) => window.__demoHighlight?.(x, y, w, h, 3200), [box.x, box.y, box.width, box.height]);
       const aStart = now();
       await sleep(2600);
       page.evaluate(() => window.__demoHighlightOff?.()).catch(() => {});
@@ -114,10 +115,12 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
     if (ring) await page.evaluate(([x, y, w, h]) => window.__demoHighlight?.(x, y, w, h), [box.x, box.y, box.width, box.height]);
     await sleep(ring ? 1100 : 300);
     const aStart = now();
+    // The ring fades as the click lands, not when the whole action ends (typing can take several seconds).
+    const off = ring ? setTimeout(() => page.evaluate(() => window.__demoHighlightOff?.()).catch(() => {}), 300) : null;
     try {
       await perform(page, loc, step, { timeout: 12_000 });
     } finally {
-      if (ring) setTimeout(() => page.evaluate(() => window.__demoHighlightOff?.()).catch(() => {}), 250);
+      if (ring) { clearTimeout(off); page.evaluate(() => window.__demoHighlightOff?.()).catch(() => {}); }
     }
     timeline.actions.push({
       scene: sceneIdx, do: step.do, zoom: !!step.zoom, start: aStart, end: now() + 900,

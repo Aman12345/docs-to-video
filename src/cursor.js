@@ -33,9 +33,12 @@
     document.addEventListener('mousemove', (e) => { window.__demoPos = { x: e.clientX, y: e.clientY }; move(e.clientX, e.clientY); }, true);
 
     // Pulsing ring centred on the control (x, y, w, h in screen pixels), until __demoHighlightOff().
-    let ring, halo;
-    window.__demoHighlight = (x, y, w, h) => {
+    // Safety net: the ring removes itself after ms (default 3 s), even if the "off" call never arrives
+    // (e.g. the page was busy or re-rendered at the moment of the click).
+    let ring, halo, auto;
+    window.__demoHighlight = (x, y, w, h, ms = 3000) => {
       window.__demoHighlightOff?.(true);
+      clearTimeout(auto); auto = setTimeout(() => window.__demoHighlightOff?.(), ms);
       const pad = 8;
       const place = (el) => Object.assign(el.style, { left: `${x - pad}px`, top: `${y - pad}px`, width: `${w + pad * 2}px`, height: `${h + pad * 2}px` });
       halo = document.createElement('div'); halo.className = '__demo_halo'; place(halo);
@@ -44,6 +47,8 @@
       requestAnimationFrame(() => { halo.classList.add('__demo_on'); ring.classList.add('__demo_on'); });
     };
     window.__demoHighlightOff = (now) => {
+      clearTimeout(auto);
+      for (const el of document.querySelectorAll('.__demo_ring, .__demo_halo')) if (el !== ring && el !== halo) el.remove(); // strays
       for (const el of [ring, halo]) {
         if (!el) continue;
         if (now) el.remove();

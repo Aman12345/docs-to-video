@@ -8,7 +8,7 @@ import { chromium } from 'playwright';
 const LAUNCH = { handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false };
 import { locate, perform, performPageStep } from './locate.mjs';
 import { planCheck, CHECK_CHAPTER } from './check.mjs';
-import { get } from './settings.mjs';
+import { get, guidelinesText } from './settings.mjs';
 import { authorModel, chat, parseJson, snapshot, describe, newUsage } from './ai.mjs';
 
 const MAX_ACTIONS = 22; // Miter AI flows need room: popups, navigation, form, chat, approve, waits
@@ -42,7 +42,14 @@ Rules:
   wall, or the site refuses. Never try to get around such checks.
 - Never type passwords, payment details or personal information, and never place an order or
   complete a purchase. Adding an item to a cart is fine.
-- For cookie or consent banners, choose reject / decline / necessary-only. Close unrelated popups.`;
+- For cookie or consent banners, choose reject / decline / necessary-only. Close unrelated popups.
+- Show choices, don't hide them: when the viewer has to pick from several options (a dropdown, radio buttons,
+  an approver type, a policy rule), open the list so the options are visible, then {"do":"wait","seconds":2} so
+  viewers can read them, and use that step's "narration" to name the main options and when each is used, in
+  one or two short sentences. Then pick the option this example needs. Never pick one silently as if it were
+  the only choice.
+- When the goal is to set something up (a policy, a rule, an approval flow), show the settings that matter,
+  not only the minimum needed to save.`;
 
 // How to write the spoken script. Drawn from instructional-video and UI-writing guidance: TechSmith's
 // video-length research (one focused task, short opening), Mayer's multimedia principles (signal what
@@ -91,7 +98,7 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
   const browser = await chromium.launch(LAUNCH);
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, ...(storageState ? { storageState } : {}) });
   const page = await context.newPage();
-  const system = SYSTEM + (storageState ? SIGNED_IN_RULES : '');
+  const system = SYSTEM + (storageState ? SIGNED_IN_RULES : '') + guidelinesText();
   try {
     await page.goto(start, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(1200);
@@ -150,7 +157,7 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
   const list = actions.map((a, i) => `${i}. ${describe(a)} | narration idea: ${a.narration || ''}`).join('\n');
   const outline = parseJson(await chat([
     { role: 'system', content: 'You write short how-to video storyboards. Reply with ONLY one JSON object.' },
-    { role: 'user', content: `Goal of the video: ${prompt}\n\nThese browser actions were performed, in order:\n${list}\n\n${SCRIPT_RULES}\n\nGroup them into 2 to 5 scenes (steps), in order, using every action index exactly once. Return:\n{"title": "short task-style title in sentence case, starting with a verb, e.g. Create a reimbursement (capitalise only names and product terms)", "description": "one sentence", "answersQuestions": ["3 ways a user might ask for this"], "intro": "spoken opening, max 20 words, following the intro rule", "checks": ["2-3 short things the viewer can check to confirm it worked"], "scenes": [{"chapter": "2-4 word step title", "narration": "1-2 short spoken sentences, max 25 words, following the narration rules", "steps": [0, 1]}]}` },
+    { role: 'user', content: `Goal of the video: ${prompt}\n\nThese browser actions were performed, in order:\n${list}\n\n${SCRIPT_RULES}\n\nGroup them into 2 to 5 scenes (steps), in order, using every action index exactly once.${guidelinesText()} Return:\n{"title": "short task-style title in sentence case, starting with a verb, e.g. Create a reimbursement (capitalise only names and product terms)", "description": "one sentence", "answersQuestions": ["3 ways a user might ask for this"], "intro": "spoken opening, max 20 words, following the intro rule", "checks": ["2-3 short things the viewer can check to confirm it worked"], "scenes": [{"chapter": "2-4 word step title", "narration": "1-2 short spoken sentences, max 25 words, following the narration rules", "steps": [0, 1]}]}` },
   ], usage, { model, maxTokens: 1500 }));
 
   const used = new Set();
