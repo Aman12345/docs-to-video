@@ -36,7 +36,12 @@ function allowed(req, res) {
 // Re-record videos from their saved steps (no Claude planning, so under a cent each). Used after an
 // app release: from the dashboard, or by POST /videos/rerecord from a deploy hook or schedule.
 export async function queueRerecords(db, filter = {}, source = 'rerecord') {
-  const vids = await db.collection('videos').find({ ...filter, storyboard: { $exists: true } }, { projection: { slug: 1, storyboard: 1 } }).toArray();
+  const vids = await db.collection('videos').find(filter, { projection: { slug: 1, storyboard: 1 } }).toArray();
+  // Videos made before steps were stored on the video itself: use the latest version's saved steps.
+  for (const v of vids.filter((x) => !x.storyboard)) {
+    v.storyboard = (await db.collection('video_versions').findOne({ slug: v.slug }, { sort: { version: -1 }, projection: { storyboard: 1 } }))?.storyboard;
+  }
+  for (let i = vids.length - 1; i >= 0; i--) if (!vids[i].storyboard) vids.splice(i, 1);
   const busy = new Set((await db.collection('jobs').find({ status: { $in: ['queued', 'running'] }, rerecordOf: { $exists: true } }, { projection: { rerecordOf: 1 } }).toArray()).map((j) => j.rerecordOf));
   const todo = vids.filter((v) => !busy.has(v.slug));
   if (todo.length) {
@@ -126,7 +131,7 @@ ${videos.length ? `<div class="grid">${videos.map((v) => `<div class="card vid">
 <h3>${esc(v.title)}</h3><div class="meta">${statusPill(v.status)} &nbsp;v${v.version} &middot; ${v.durationSec}s &middot; ${(v.sizeBytes / 1e6).toFixed(1)} MB &middot; ${v.narrated ? 'narrated' : 'captions only'}${v.trimmedSec ? ` &middot; ${v.trimmedSec}s dead time trimmed` : ''}${v.lastCost ? ` &middot; $${v.lastCost.total.toFixed(3)}` : ''}</div>
 ${v.needsAttention ? `<div class="err" style="margin:10px 0 0;font-size:13px"><strong>Steps no longer work</strong> (the app probably changed): ${esc(v.needsAttention.slice(0, 200))}</div>` : ''}
 ${v.qa && !v.qa.ok ? `<details style="margin-top:8px"><summary style="color:#b54708">⚠ ${v.qa.warnings.length} quality warning${v.qa.warnings.length > 1 ? 's' : ''}</summary><ul class="meta" style="margin:6px 0 0;padding-left:18px">${v.qa.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></details>` : v.qa ? '<div class="meta" style="margin-top:6px;color:#067647">✓ Quality checks passed</div>' : ''}
-<div class="actions"><a class="btn" href="/v/${esc(v.slug)}">Watch</a><a class="btn" href="/videos/${esc(v.slug)}/video?v=${v.version}" download="${esc(v.slug)}.mp4">MP4</a>${v.storyboard ? `<a class="btn" href="/videos/${esc(v.slug)}/sop.md?v=${v.version}" download="${esc(v.slug)}-sop.md">SOP</a><form method="post" action="/ui/rerecord/${esc(v.slug)}"><button class="ghost" title="Record again from the saved steps (no Claude cost)">Re-record</button></form>` : ''}
+<div class="actions"><a class="btn" href="/v/${esc(v.slug)}">Watch</a><a class="btn" href="/videos/${esc(v.slug)}/video?v=${v.version}" download="${esc(v.slug)}.mp4">MP4</a>${v.storyboard ? `<a class="btn" href="/videos/${esc(v.slug)}/sop.md?v=${v.version}" download="${esc(v.slug)}-sop.md">SOP</a>` : ''}<form method="post" action="/ui/rerecord/${esc(v.slug)}"><button class="ghost" title="Record again from the saved steps (no Claude cost)">Re-record</button></form>
 ${v.status !== 'approved' ? `<form method="post" action="/ui/approve/${esc(v.slug)}"><button class="ghost">Approve</button></form>` : ''}</div></div>`).join('')}</div>` : '<p class="empty">No videos yet. Make one above.</p>'}
 </main></body></html>`;
 }
