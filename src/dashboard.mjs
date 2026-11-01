@@ -531,22 +531,31 @@ export async function handleDashboard(db, req, res, url) {
     return true;
   }
   if (req.method === 'GET' && p === '/ui/ai-check') {
-    // Asks each AI model one tiny question in the same JSON format the planner and takeover use,
-    // to confirm the model id works on OpenRouter before relying on it.
-    const out = [];
-    for (const [what, model] of [['Planning', authorModel()], ['Takeover', repairModel()]]) {
+    // Health check: gives each AI model a made-up broken step and checks it answers sensibly.
+    const rows = [];
+    for (const [what, role, model] of [['Planning', 'Plans each new video from your description.', authorModel()], ['Takeover', 'Fixes steps that stop working and adds the "Check your work" ending.', repairModel()]]) {
       const usage = newUsage(model), t = Date.now();
       try {
         const reply = parseJson(await chat([
           { role: 'system', content: 'Reply with ONLY one JSON object.' },
           { role: 'user', content: 'Accessibility snapshot:\n- link "Billing"\n- tab "Invoices"\n\nThe saved step clicked tab "Invoice list", which no longer exists. Reply {"do":"click","target":{"role":...,"name":...},"use":"instead","why":"..."}' },
         ], usage, { model, maxTokens: 300 }));
-        out.push(`${what}: ${model}\n  OK in ${((Date.now() - t) / 1000).toFixed(1)}s, cost $${usage.costUsd.toFixed(5)}\n  reply: ${JSON.stringify(reply)}`);
+        const right = reply?.target?.name === 'Invoices';
+        rows.push({ what, role, model, ok: true, right, secs: ((Date.now() - t) / 1000).toFixed(1), cost: usage.costUsd, answer: reply?.target?.name ? `Click "${reply.target.name}"` : JSON.stringify(reply) });
       } catch (e) {
-        out.push(`${what}: ${model}\n  FAILED: ${e.message.slice(0, 300)}`);
+        rows.push({ what, role, model, ok: false, error: e.message.slice(0, 300) });
       }
     }
-    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }).end(out.join('\n\n'));
+    const card = (r) => `<section class="card"><div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap"><div><h2>${esc(r.what)} AI</h2><div class="meta">${esc(r.role)}<br><code>${esc(r.model)}</code></div></div>
+      <div class="badge ${r.ok && r.right ? 'ok' : 'bad'}">${r.ok ? (r.right ? '✓ Working' : '⚠ Answered oddly') : '✕ Not working'}</div></div>
+      ${r.ok ? `<p>Its answer: <strong>${esc(r.answer)}</strong> ${r.right ? '(correct)' : '(expected "Invoices")'} · ${r.secs}s · cost $${r.cost.toFixed(5)}</p>` : `<p class="err">${esc(r.error)}</p><p class="meta">${/limit/i.test(r.error) ? 'The OpenRouter key has hit its credit limit: raise it on openrouter.ai → Keys.' : 'Check the model name on the Settings page and the OpenRouter key on Render.'}</p>`}</section>`;
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }).end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI check</title>
+<style>*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,sans-serif;background:#f7f8fa;color:#1d2433}main{max-width:720px;margin:0 auto;padding:24px 16px}h1{font-size:22px;margin:0 0 6px}h2{font-size:17px;margin:0 0 2px}
+.card{background:#fff;border:1px solid #e4e7ec;border-radius:12px;padding:16px 18px;margin-bottom:14px}.meta{color:#667085;font-size:13px}code{font-size:12px;background:#f2f4f7;padding:1px 5px;border-radius:4px}
+.badge{align-self:flex-start;font-weight:700;padding:4px 12px;border-radius:999px}.badge.ok{background:#ecfdf3;color:#067647}.badge.bad{background:#fef3f2;color:#b42318}.err{color:#b42318}a{color:#3b5bdb}</style></head><body><main>
+<p class="meta"><a href="/">← Dashboard</a> · <a href="/ui/settings">Settings</a></p><h1>AI check</h1>
+<p class="meta">Each AI gets a made-up problem: a saved step clicked a tab called "Invoice list" that no longer exists, and the right answer is to click "Invoices" instead. "Working" means it answered correctly. This check costs under a cent.</p>
+${rows.map(card).join('')}</main></body></html>`);
     return true;
   }
   if (req.method === 'GET' && p === '/ui/voice-check') {
