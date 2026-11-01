@@ -33,6 +33,20 @@ function allowed(req, res) {
   return false;
 }
 
+// Re-record videos from their saved steps (no Claude planning, so under a cent each). Used after an
+// app release: from the dashboard, or by POST /videos/rerecord from a deploy hook or schedule.
+export async function queueRerecords(db, filter = {}, source = 'rerecord') {
+  const vids = await db.collection('videos').find({ ...filter, storyboard: { $exists: true } }, { projection: { slug: 1, storyboard: 1 } }).toArray();
+  const busy = new Set((await db.collection('jobs').find({ status: { $in: ['queued', 'running'] }, rerecordOf: { $exists: true } }, { projection: { rerecordOf: 1 } }).toArray()).map((j) => j.rerecordOf));
+  const todo = vids.filter((v) => !busy.has(v.slug));
+  if (todo.length) {
+    await db.collection('jobs').insertMany(todo.map((v, i) => ({
+      status: 'queued', storyboard: v.storyboard, rerecordOf: v.slug, attempts: 0, createdAt: new Date(Date.now() + i), source,
+    })));
+  }
+  return todo.length;
+}
+
 const redirect = (res, to = '/') => res.writeHead(303, { Location: to }).end();
 
 function page({ sbs, jobs, videos, busy, error, logins = [] }) {
@@ -106,10 +120,13 @@ ${jobs.map((j) => {
 }).join('')}
 </tbody></table>` : '<p class="empty">No jobs yet.</p>'}
 
-<h2>Video library</h2>
+<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap"><h2>Video library</h2>
+${videos.length ? `<form method="post" action="/ui/rerecord-all" onsubmit="return confirm('Re-record every video from its saved steps? No Claude cost; takes about 2 minutes per video.')"><button class="ghost">Re-record all</button></form>` : ''}</div>
 ${videos.length ? `<div class="grid">${videos.map((v) => `<div class="card vid"><a href="/v/${esc(v.slug)}"><img src="/videos/${esc(v.slug)}/thumbnail?v=${v.version}" alt=""></a>
-<h3>${esc(v.title)}</h3><div class="meta">${statusPill(v.status)} &nbsp;v${v.version} &middot; ${v.durationSec}s &middot; ${(v.sizeBytes / 1e6).toFixed(1)} MB &middot; ${v.narrated ? 'narrated' : 'captions only'}</div>
-<div class="actions"><a class="btn" href="/v/${esc(v.slug)}">Watch</a><a class="btn" href="/videos/${esc(v.slug)}/video?v=${v.version}" download="${esc(v.slug)}.mp4">Download MP4</a>
+<h3>${esc(v.title)}</h3><div class="meta">${statusPill(v.status)} &nbsp;v${v.version} &middot; ${v.durationSec}s &middot; ${(v.sizeBytes / 1e6).toFixed(1)} MB &middot; ${v.narrated ? 'narrated' : 'captions only'}${v.trimmedSec ? ` &middot; ${v.trimmedSec}s dead time trimmed` : ''}${v.lastCost ? ` &middot; $${v.lastCost.total.toFixed(3)}` : ''}</div>
+${v.needsAttention ? `<div class="err" style="margin:10px 0 0;font-size:13px"><strong>Steps no longer work</strong> (the app probably changed): ${esc(v.needsAttention.slice(0, 200))}</div>` : ''}
+${v.qa && !v.qa.ok ? `<details style="margin-top:8px"><summary style="color:#b54708">⚠ ${v.qa.warnings.length} quality warning${v.qa.warnings.length > 1 ? 's' : ''}</summary><ul class="meta" style="margin:6px 0 0;padding-left:18px">${v.qa.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></details>` : v.qa ? '<div class="meta" style="margin-top:6px;color:#067647">✓ Quality checks passed</div>' : ''}
+<div class="actions"><a class="btn" href="/v/${esc(v.slug)}">Watch</a><a class="btn" href="/videos/${esc(v.slug)}/video?v=${v.version}" download="${esc(v.slug)}.mp4">MP4</a>${v.storyboard ? `<a class="btn" href="/videos/${esc(v.slug)}/sop.md?v=${v.version}" download="${esc(v.slug)}-sop.md">SOP</a><form method="post" action="/ui/rerecord/${esc(v.slug)}"><button class="ghost" title="Record again from the saved steps (no Claude cost)">Re-record</button></form>` : ''}
 ${v.status !== 'approved' ? `<form method="post" action="/ui/approve/${esc(v.slug)}"><button class="ghost">Approve</button></form>` : ''}</div></div>`).join('')}</div>` : '<p class="empty">No videos yet. Make one above.</p>'}
 </main></body></html>`;
 }
@@ -259,6 +276,11 @@ export async function handleDashboard(db, req, res, url) {
     else if (!res2.ok) res.writeHead(502, { 'Content-Type': 'text/plain' }).end(`Text-to-speech failed (${res2.status}): ${(await res2.text()).slice(0, 300)}`);
     else res.writeHead(200, { 'Content-Type': 'audio/mpeg' }).end(Buffer.from(await res2.arrayBuffer()));
     return true;
+  }
+  if (req.method === 'POST' && (p.startsWith('/ui/rerecord/') || p === '/ui/rerecord-all')) {
+    const n = await queueRerecords(db, p === '/ui/rerecord-all' ? {} : { slug: decodeURIComponent(p.split('/')[3]) }, 'dashboard');
+    if (!n) return redirect(res, `/?error=${encodeURIComponent('Nothing to re-record: older videos made before steps were saved need to be made again once.')}`);
+    return redirect(res);
   }
   if (req.method === 'POST' && p.startsWith('/ui/approve/')) {
     await db.collection('videos').updateOne({ slug: decodeURIComponent(p.split('/')[3]) }, { $set: { status: 'approved', approvedAt: new Date() } });

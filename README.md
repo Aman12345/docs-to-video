@@ -88,3 +88,21 @@ Only the browser session (cookies and local storage) is stored, encrypted in Mon
 (falls back to `DEMO_PASSWORD`). Passwords are never stored. While signed in, Claude follows extra rules: no running
 payroll, paying, sending, inviting, deleting or changing settings, and it stops before the final Save/Submit unless asked.
 Use a test account with demo data: share links are public and videos show whatever is on screen.
+
+## Video polish and outputs (several ideas borrowed from [aidemo](https://github.com/tandryukha/aidemo), MIT)
+
+- **Intro and outro:** every video opens with a spoken intro that lists the steps, and closes with a recap and an
+  optional "Check your work" list. Claude writes `intro`, `outro` and `checks` when planning; ready-made storyboards
+  can set them, or get sensible defaults.
+- **Dead-time trimming:** moments where nothing moves (page loads, spinners) are cut, keeping only what each step
+  needs for its narration. Long waits (e.g. Miter AI building a report) get an "About 3 minutes later" label.
+- **Captions** are split into short lines timed across the spoken sentence.
+- **Written SOP:** each video gets one screenshot per step and numbered instructions. See it on the share page,
+  or download it as Markdown (`/videos/<slug>/sop.md`).
+- **Quality checks** on the finished file (blank screens, silent voice, captions that flash by, overly long videos)
+  show as warnings in the dashboard.
+- **Blurring:** SSNs, EINs and 9+ digit account numbers are blurred on screen before recording.
+  `REDACT=off` disables it; `REDACT_PATTERNS='["regex", ...]'` replaces the patterns.
+- **Re-record after app updates:** "Re-record" / "Re-record all" in the dashboard, or
+  `POST /videos/rerecord` (body `{}`, `{"status":"approved"}` or `{"slugs":[...]}`) from a deploy hook or schedule.
+  Replays saved steps with no Claude cost. If the steps no longer work, the video is flagged in the dashboard.

@@ -147,7 +147,7 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
   const list = actions.map((a, i) => `${i}. ${describe(a)} | narration idea: ${a.narration || ''}`).join('\n');
   const outline = parseJson(await chat([
     { role: 'system', content: 'You write short how-to video storyboards. Reply with ONLY one JSON object.' },
-    { role: 'user', content: `Goal of the video: ${prompt}\n\nThese browser actions were performed, in order:\n${list}\n\nGroup them into 2 to 5 scenes, in order, using every action index exactly once. Return:\n{"title": "short task-style title", "description": "one sentence", "answersQuestions": ["3 ways a user might ask for this"], "scenes": [{"chapter": "2-4 word step title", "narration": "one or two short sentences, max 25 words, speaking to the viewer", "steps": [0, 1]}]}` },
+    { role: 'user', content: `Goal of the video: ${prompt}\n\nThese browser actions were performed, in order:\n${list}\n\nGroup them into 2 to 5 scenes, in order, using every action index exactly once. Return:\n{"title": "short task-style title", "description": "one sentence", "answersQuestions": ["3 ways a user might ask for this"], "intro": "spoken opening, max 25 words: what the viewer will learn and the steps in order", "outro": "spoken closing, max 25 words: recap of what they did and the result", "checks": ["2-3 short things the viewer can check to confirm it worked"], "scenes": [{"chapter": "2-4 word step title", "narration": "one or two short sentences, max 25 words, speaking to the viewer", "steps": [0, 1]}]}` },
   ], usage, 1500));
 
   const used = new Set();
@@ -167,6 +167,9 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
     title: outline.title || prompt,
     description: outline.description || prompt,
     answersQuestions: outline.answersQuestions || [],
+    intro: typeof outline.intro === 'string' ? outline.intro : undefined,
+    outro: typeof outline.outro === 'string' ? outline.outro : undefined,
+    checks: Array.isArray(outline.checks) ? outline.checks.slice(0, 4).map(String) : undefined,
     tags: { source: 'prompt' },
     prompt,
     startUrl: startUrl || '/',

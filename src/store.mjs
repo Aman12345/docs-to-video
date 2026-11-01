@@ -53,7 +53,10 @@ export async function saveVideo(db, { storyboard, composed, jobId }) {
     mp4: await upload(db, composed.mp4Path, `${slug}.mp4`, 'video/mp4', meta),
     thumbnail: await upload(db, composed.thumbPath, `${slug}.jpg`, 'image/jpeg', meta),
     captions: await upload(db, composed.vttPath, `${slug}.vtt`, 'text/vtt', meta),
+    steps: [],
   };
+  // One screenshot per step, for the written SOP.
+  for (const [i, f] of (composed.stepFrames || []).entries()) files.steps.push(await upload(db, f, `${slug}-step-${i + 1}.jpg`, 'image/jpeg', meta));
   const sizeBytes = fs.statSync(composed.mp4Path).size;
   const now = new Date();
   const prev = await db.collection('videos').findOne({ slug }, { projection: { version: 1 } });
@@ -70,7 +73,9 @@ export async function saveVideo(db, { storyboard, composed, jobId }) {
         answersQuestions: storyboard.answersQuestions, tags: storyboard.tags, guide: storyboard.guide,
         transcript: composed.transcript, chapters: composed.chapters, durationSec: composed.durationSec,
         narrated: composed.narrated, files, sizeBytes, version, status: 'draft', updatedAt: now,
+        storyboard, qa: composed.qa, trimmedSec: composed.trimmedSec,
       },
+      $unset: { needsAttention: '' },
       $setOnInsert: { createdAt: now, timesSent: 0 },
     },
     { upsert: true },

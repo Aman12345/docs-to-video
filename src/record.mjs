@@ -10,6 +10,7 @@ const VIEWPORT = { width: 1280, height: 720 };
 export const CHAPTER_CARD_MS = 1600; // time at the start of each scene reserved for its title card
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export const REDACT_DEFAULTS = ['\\b\\d{3}-\\d{2}-\\d{4}\\b', '\\b\\d{2}-\\d{7}\\b', '\\b\\d{9,17}\\b'];
 
 // Eased glide over ~0.7 s; the cursor's CSS transition smooths the gaps between moves.
 let pos = { x: 640, y: 360 };
@@ -33,6 +34,11 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
   const context = await browser.newContext({ viewport: VIEWPORT, ...(storageState ? { storageState } : {}) });
   await context.addInitScript({ content: `window.__demoBrand = ${JSON.stringify({ primary: brand.primary })};` });
   await context.addInitScript({ path: new URL('./cursor.js', import.meta.url).pathname });
+  // Blur sensitive numbers (SSNs, EINs, account numbers) before they are recorded. REDACT=off disables;
+  // REDACT_PATTERNS='["regex", ...]' replaces the defaults.
+  const patterns = process.env.REDACT_PATTERNS ? JSON.parse(process.env.REDACT_PATTERNS) : REDACT_DEFAULTS;
+  await context.addInitScript({ content: `window.__demoRedact = ${JSON.stringify({ off: /^off$/i.test(process.env.REDACT || ''), patterns })};` });
+  await context.addInitScript({ path: new URL('./redact.js', import.meta.url).pathname });
   const page = await context.newPage();
   await page.goto(new URL(storyboard.startUrl, baseUrl).toString(), { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(800);

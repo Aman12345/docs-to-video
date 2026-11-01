@@ -3,6 +3,7 @@
 // small logo for the caption band. The composer overlays these on the recording with ffmpeg.
 import { chromium } from 'playwright';
 import path from 'node:path';
+import { checksFor } from './narrative.mjs';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
@@ -18,24 +19,42 @@ const logoOrName = (brand, size = 64) => brand.logo
   ? `<img class="logo" style="max-height:${size + 20}px" src="${brand.logo}" alt="">`
   : `<div class="wordmark" style="font-size:${size}px">${esc(brand.name)}</div>`;
 
+// Intro: title and description on the left, the list of steps ("In this video") on the right.
 function introHtml(brand, sb) {
-  const steps = sb.scenes.length;
-  return base(brand, `<div style="position:absolute;inset:0;padding:120px 150px;display:flex;flex-direction:column;justify-content:space-between">
+  const n = sb.scenes.length;
+  return base(brand, `<div style="position:absolute;inset:0;padding:110px 140px;display:flex;flex-direction:column;justify-content:space-between">
     <div style="display:flex;align-items:center;gap:22px">${logoOrName(brand, 52)}<div style="font-size:26px;opacity:.75;padding-left:22px;border-left:2px solid #ffffff40">${esc(brand.tagline)}</div></div>
-    <div><div style="display:inline-block;font-size:24px;font-weight:600;padding:8px 18px;border-radius:999px;background:${brand.primary};margin-bottom:28px">How-to guide &middot; ${steps} step${steps === 1 ? '' : 's'}</div>
-    <div style="font-size:92px;font-weight:800;line-height:1.05;letter-spacing:-.025em;max-width:1500px">${esc(sb.title)}</div>
-    ${sb.description ? `<div style="font-size:32px;line-height:1.4;opacity:.8;margin-top:28px;max-width:1300px">${esc(sb.description)}</div>` : ''}</div>
+    <div style="display:flex;gap:90px;align-items:center">
+      <div style="flex:1.25"><div style="display:inline-block;font-size:24px;font-weight:600;padding:8px 18px;border-radius:999px;background:${brand.primary};margin-bottom:28px">How-to guide &middot; ${n} step${n === 1 ? '' : 's'}</div>
+        <div style="font-size:80px;font-weight:800;line-height:1.05;letter-spacing:-.025em">${esc(sb.title)}</div>
+        ${sb.description ? `<div style="font-size:30px;line-height:1.4;opacity:.8;margin-top:26px">${esc(sb.description)}</div>` : ''}</div>
+      <div style="flex:1;background:#ffffff10;border:1px solid #ffffff26;border-radius:28px;padding:40px 44px">
+        <div style="font-size:24px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.7;margin-bottom:22px">In this video</div>
+        ${sb.scenes.map((sc, i) => `<div style="display:flex;gap:20px;align-items:center;padding:13px 0;${i ? 'border-top:1px solid #ffffff1f;' : ''}font-size:32px;font-weight:600">
+          <span style="flex:none;width:48px;height:48px;border-radius:50%;background:${brand.primary};display:grid;place-items:center;font-size:24px">${i + 1}</span>${esc(sc.chapter)}</div>`).join('')}
+      </div></div>
     <div style="height:6px;width:220px;border-radius:6px;background:${brand.primary}"></div></div>`);
 }
 
-function outroHtml(brand, sb) {
-  return base(brand, `<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:34px">
-    <div style="width:120px;height:120px;border-radius:50%;background:${brand.primary};display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 18px ${brand.primary}33">
-      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
-    <div style="font-size:84px;font-weight:800;letter-spacing:-.02em">You're all set</div>
-    <div style="font-size:34px;opacity:.8;max-width:1300px">${esc(sb.title)}</div>
-    <div style="font-size:28px;opacity:.65;margin-top:10px">${esc(brand.support)}</div>
-    <div style="margin-top:36px">${logoOrName(brand, 44)}</div></div>`);
+// Outro: "You're all set", a recap of the steps done, and optional "check your work" points.
+function outroHtml(brand, sb, checks = []) {
+  const tick = (c) => `<svg width="30" height="30" viewBox="0 0 24 24" style="flex:none"><circle cx="12" cy="12" r="12" fill="${c}"/><path d="M6.5 12.5l3.5 3.5 7.5-8" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  return base(brand, `<div style="position:absolute;inset:0;padding:110px 140px;display:flex;gap:90px;align-items:center">
+    <div style="flex:1">
+      <div style="width:110px;height:110px;border-radius:50%;background:${brand.primary};display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 18px ${brand.primary}33;margin-bottom:44px">
+        <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+      <div style="font-size:84px;font-weight:800;letter-spacing:-.02em">You're all set</div>
+      <div style="font-size:34px;opacity:.8;margin-top:14px">${esc(sb.title)}</div>
+      <div style="font-size:26px;opacity:.6;margin-top:30px">${esc(brand.support)}</div>
+      <div style="margin-top:50px">${logoOrName(brand, 40)}</div></div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:26px">
+      <div style="background:#ffffff10;border:1px solid #ffffff26;border-radius:28px;padding:36px 42px">
+        <div style="font-size:24px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.7;margin-bottom:16px">What you did</div>
+        ${sb.scenes.map((sc) => `<div style="display:flex;gap:18px;align-items:center;padding:9px 0;font-size:30px;font-weight:600">${tick(brand.primary)}${esc(sc.chapter)}</div>`).join('')}</div>
+      ${checks.length ? `<div style="background:#fff;color:#101828;border-radius:28px;padding:34px 42px">
+        <div style="font-size:24px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${brand.primary};margin-bottom:12px">Check your work</div>
+        ${checks.map((c) => `<div style="display:flex;gap:16px;align-items:flex-start;padding:7px 0;font-size:27px">${tick('#12B76A')}<span>${esc(c)}</span></div>`).join('')}</div>` : ''}
+    </div></div>`);
 }
 
 // Shown over a blurred frame at the start of each chapter.
@@ -75,7 +94,7 @@ export async function renderCards({ storyboard, brand, outDir }) {
     const n = storyboard.scenes.length;
     const cards = {
       intro: await shot(introHtml(brand, storyboard), 'card-intro.png', false),
-      outro: await shot(outroHtml(brand, storyboard), 'card-outro.png', false),
+      outro: await shot(outroHtml(brand, storyboard, checksFor(storyboard)), 'card-outro.png', false),
       bug: await shot(bugHtml(brand), 'card-bug.png', true),
       chapters: [], pills: [],
     };

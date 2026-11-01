@@ -84,6 +84,10 @@ export async function startWorker() {
         const retry = job.attempts < 2 && !/Claude stopped|OPENROUTER_API_KEY|did not find any steps|Saved login/.test(err.message);
         await jobs.updateOne({ _id: job._id }, { $set: { status: retry ? 'queued' : 'failed', error: err.message.slice(0, 2000) } });
         log(`failed (${retry ? 'will retry' : 'giving up'}): ${err.message.split('\n')[0]}`);
+        // A re-record that fails usually means the app changed under the saved steps: flag the video.
+        if (!retry && job.rerecordOf) {
+          await db.collection('videos').updateOne({ slug: job.rerecordOf }, { $set: { needsAttention: err.message.split('\n')[0].slice(0, 300), needsAttentionAt: new Date() } });
+        }
       }
     }
     demo?.server.close();

@@ -6,6 +6,7 @@ import { record } from './record.mjs';
 import { compose, synthesizeVoice } from './compose.mjs';
 import { renderCards } from './cards.mjs';
 import { getBrand } from './brand.mjs';
+import { introText, outroText } from './narrative.mjs';
 import { getDb, ensureIndexes, saveVideo, closeDb } from './store.mjs';
 import { startDemoApp } from './demo-server.mjs';
 
@@ -18,19 +19,25 @@ export async function makeVideo({ storyboard, baseUrl, jobId, storageState, log 
     const timings = {};
     let t = Date.now();
     // Voice first, so the recorder holds each scene long enough for its sentence.
-    const voice = await synthesizeVoice(storyboard.scenes, workDir, log);
-    if (voice.length) log(`voiceover: ${voice.length} clips in ${secs(t)}s`);
+    // Spoken intro (what you'll learn + the steps), one line per scene, and a closing recap.
+    const intro = introText(storyboard), outro = outroText(storyboard);
+    const texts = [intro, ...storyboard.scenes.map((s) => s.narration || ''), outro];
+    const clips = await synthesizeVoice(texts, workDir, log);
+    const voiced = clips.length === texts.length;
+    const voice = voiced ? clips.slice(1, -1) : [];
+    if (voiced) log(`voiceover: ${clips.length} clips (intro, ${voice.length} steps, outro) in ${secs(t)}s`);
     timings.voiceSec = +secs(t);
-    const voiceChars = voice.length ? storyboard.scenes.reduce((n, s) => n + (s.narration || '').length, 0) : 0;
+    const voiceChars = voiced ? texts.reduce((n, x) => n + x.length, 0) : 0;
     t = Date.now();
     const { videoPath, timeline } = await record({ storyboard, baseUrl, outDir: workDir, brand, voiceMs: voice.map((v) => v.ms), storageState });
     log(`recorded ${timeline.scenes.length} scenes in ${secs(t)}s`);
     timings.recordSec = +secs(t);
     t = Date.now();
     const cards = await renderCards({ storyboard, brand, outDir: workDir });
-    const composed = await compose({ rawPath: videoPath, timeline, outDir: workDir, brand, cards, voice, storyboard });
+    const composed = await compose({ rawPath: videoPath, timeline, outDir: workDir, brand, cards, voice, storyboard,
+      introVoice: voiced ? clips[0] : null, outroVoice: voiced ? clips.at(-1) : null, introText: intro, outroText: outro });
     timings.composeSec = +secs(t);
-    log(`composed ${composed.durationSec}s ${brand.name}-branded video in ${secs(t)}s (audio: ${composed.narrated ? 'voiceover + captions' : 'captions only'})`);
+    log(`composed ${composed.durationSec}s ${brand.name}-branded video in ${secs(t)}s (audio: ${composed.narrated ? 'voiceover + captions' : 'captions only'}; trimmed ${composed.trimmedSec}s of dead time; quality: ${composed.qa.ok ? 'ok' : composed.qa.warnings.length + ' warning(s)'})`);
     const db = await getDb();
     await ensureIndexes(db);
     const saved = await saveVideo(db, { storyboard, composed, jobId });

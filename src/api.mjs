@@ -3,11 +3,12 @@
 import http from 'node:http';
 import { ObjectId } from 'mongodb';
 import { getDb, ensureIndexes, bucket } from './store.mjs';
-import { handleDashboard } from './dashboard.mjs';
+import { handleDashboard, queueRerecords } from './dashboard.mjs';
+import { sopMarkdown, guideHtml } from './sop.mjs';
 
 const PORT = Number(process.env.PORT) || 10000;
 const API_KEY = process.env.API_KEY; // required for write and search routes when set
-const PUBLIC_URL = process.env.PUBLIC_URL || `http://127.0.0.1:${PORT}`;
+const PUBLIC_URL = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || `http://127.0.0.1:${PORT}`;
 
 const json = (res, code, body) => res.writeHead(code, { 'Content-Type': 'application/json' }).end(JSON.stringify(body, null, 2));
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -38,10 +39,17 @@ function sharePage(v) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(v.title)}</title><style>body{margin:0;font:16px/1.5 system-ui,sans-serif;background:#f7f8fa;color:#1d2433}
 main{max-width:960px;margin:0 auto;padding:24px 16px}video{width:100%;border-radius:12px;background:#111827}
-h1{font-size:24px;margin:0 0 6px}p{color:#667085;margin:0 0 18px}ol{padding-left:20px}li span{color:#667085;font-size:14px}</style></head>
+h1{font-size:24px;margin:0 0 6px}main>p{color:#667085;margin:0 0 18px}
+.guide{margin-top:28px}.guide-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}.guide-head h2{font-size:19px;margin:0}
+.guide-head a{font-size:14px;color:#3b5bdb}.step{display:grid;grid-template-columns:1fr 1.3fr;gap:20px;align-items:start;background:#fff;border:1px solid #e4e7ec;border-radius:12px;padding:18px;margin-top:14px}
+.step h3{font-size:17px;margin:0 0 6px;display:flex;gap:10px;align-items:center}.num{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:50%;background:#680BBD;color:#fff;font-size:14px}
+.step p{color:#475467;margin:0 0 8px}.step ol{padding-left:20px;margin:0 0 10px}.step img{width:100%;border-radius:8px;border:1px solid #e4e7ec}
+.jump{font:inherit;font-size:13px;border:1px solid #d0d5dd;background:#fff;border-radius:8px;padding:5px 10px;cursor:pointer;color:#344054}
+.checks{background:#ecfdf3;border:1px solid #abefc6;border-radius:12px;padding:14px 18px;margin-top:14px}.checks h3{margin:0 0 6px;font-size:16px;color:#067647}.checks ul{margin:0;padding-left:20px}
+@media (max-width:720px){.step{grid-template-columns:1fr}}</style></head>
 <body><main><h1>${esc(v.title)}</h1><p>${esc(v.description)}</p>
 <video controls preload="metadata" poster="/videos/${v.slug}/thumbnail?v=${v.version}" src="/videos/${v.slug}/video?v=${v.version}"><track kind="captions" srclang="en" label="English" src="/videos/${v.slug}/captions?v=${v.version}"></video>
-<h2 style="font-size:17px">Steps</h2><ol>${chapters}</ol>
+${v.storyboard ? guideHtml(v) : `<h2 style="font-size:17px">Steps</h2><ol>${chapters}</ol>`}
 <p style="font-size:13px;margin-top:18px">Keyboard: Space or K to play/pause, ← → to skip 5 seconds, F for full screen.</p></main>
 <script>
 // Space normally scrolls the page unless the player has focus; make it control the video instead.
@@ -57,6 +65,7 @@ document.addEventListener('keydown', (e) => {
   e.preventDefault();
 });
 document.querySelectorAll('ol a').forEach((a) => a.addEventListener('click', () => vid.play()));
+document.querySelectorAll('.jump').forEach((b) => b.addEventListener('click', () => { vid.currentTime = Number(b.dataset.t); vid.play(); vid.scrollIntoView({ behavior: 'smooth', block: 'center' }); }));
 </script></body></html>`;
 }
 
@@ -109,6 +118,14 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, hits.map((h) => ({ ...h, shareUrl: `${PUBLIC_URL}/v/${h.slug}`, thumbnailUrl: `${PUBLIC_URL}/videos/${h.slug}/thumbnail` })));
     }
 
+    // Re-record videos after an app release (call from a deploy hook, CI or a schedule).
+    // Body: {} for every video, {"status":"approved"} for approved ones, or {"slugs":["a","b"]}.
+    if (req.method === 'POST' && url.pathname === '/videos/rerecord') {
+      if (!authed) return json(res, 401, { error: 'unauthorized' });
+      const { status, slugs } = await readBody(req);
+      const filter = Array.isArray(slugs) ? { slug: { $in: slugs } } : status ? { status } : {};
+      return json(res, 202, { queued: await queueRerecords(db, filter, 'api') });
+    }
     if (req.method === 'POST' && parts[0] === 'videos' && parts[2] === 'approve') {
       if (!authed) return json(res, 401, { error: 'unauthorized' });
       const r = await db.collection('videos').updateOne({ slug: parts[1] }, { $set: { status: 'approved', approvedAt: new Date() } });
@@ -120,6 +137,10 @@ const server = http.createServer(async (req, res) => {
       if (!v) return json(res, 404, { error: 'video not found' });
       if (parts[0] === 'v') return res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(sharePage(v));
       if (!parts[2]) return json(res, 200, v);
+      if (parts[2] === 'sop.md') {
+        return res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8', 'Content-Disposition': `inline; filename="${v.slug}-sop.md"` }).end(sopMarkdown(v, PUBLIC_URL));
+      }
+      if (parts[2] === 'steps' && v.files.steps?.[Number(parts[3]) - 1]) return streamFile(db, req, res, v.files.steps[Number(parts[3]) - 1]);
       const map = { video: 'mp4', thumbnail: 'thumbnail', captions: 'captions' };
       if (map[parts[2]]) return streamFile(db, req, res, v.files[map[parts[2]]]);
     }
