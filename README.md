@@ -127,6 +127,21 @@ Pick a voice per video in the dashboard (both request forms, and next to Re-reco
 the video, so re-recording keeps it. The default is whatever TTS_MODEL / TTS_VOICE are set to. If a voice
 fails, the video falls back to the default voice instead of losing narration. Voices are listed in src/voices.mjs.
 
+### AI takeover when a step stops working
+
+Re-records replay saved steps with no AI. If a step fails (a renamed or moved button, a new popup, a slow
+page), the recorder first waits for the page to settle and tries again. If it still fails, the AI takes over:
+it gets a screenshot, the page's buttons and fields, the failed step and what the video is about, and does
+what the step meant to do (or what has to happen first, like closing a popup). Recording carries on, and the
+failed tries and thinking time are cut from the video. The fix is saved into the video's steps, so the next
+re-record needs no AI, and the video shows "The AI fixed a step … check that the narration still matches".
+If it can't fix it, the job fails with the AI's reason and a screenshot.
+
+All AI calls go through OpenRouter: `AUTHOR_MODEL` plans videos, `REPAIR_MODEL` (defaults to AUTHOR_MODEL)
+takes over; any OpenRouter model id works (the takeover sends a screenshot, so pick one that reads images).
+`REPAIR=off` turns the takeover off; `REPAIR_MAX_TURNS` (default 4) limits tries per step. It only costs
+anything when a step breaks, typically 1-5 cents.
+
 ### Quality checks and automatic fixes
 
 Every finished video is checked. Warnings have codes, and some are fixed automatically, once each:

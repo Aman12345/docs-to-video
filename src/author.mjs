@@ -1,4 +1,4 @@
-// Prompt -> storyboard. Claude (through OpenRouter) drives a browser one step at a time:
+// Prompt -> storyboard. The AI (any model, through OpenRouter) drives a browser one step at a time:
 // each turn it sees the page's accessibility tree (every button, link and field with its
 // visible name) and picks the next action. Each action is performed for real, so the
 // finished storyboard only contains steps that worked. Recording happens afterwards as a
@@ -7,11 +7,10 @@ import { chromium } from 'playwright';
 // Keep the browser alive when the server is asked to stop, so the worker decides what happens to the job.
 const LAUNCH = { handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false };
 import { locate, perform, performPageStep } from './locate.mjs';
+import { AUTHOR_MODEL, chat, parseJson, snapshot, describe, newUsage } from './ai.mjs';
 
-const MODEL = process.env.AUTHOR_MODEL || 'anthropic/claude-opus-5.5';
 const MAX_ACTIONS = 22; // Miter AI flows need room: popups, navigation, form, chat, approve, waits
 const MAX_ERRORS = 4;
-const SNAPSHOT_CHARS = 14000;
 
 const SYSTEM = `You operate a web browser to plan a short how-to video. You will be given a goal.
 Each turn you see the current URL, page title, the actions taken so far, and an accessibility
@@ -64,7 +63,7 @@ const SCRIPT_RULES = `How to write the narration (it is spoken by a voice and sh
   really needed ("You'll need admin access."). Don't list the steps; they are shown on screen.`;
 
 // Extra rules when signed in to a company's own app (e.g. Miter staging) with a saved login.
-const SIGNED_IN_RULES = `
+export const SIGNED_IN_RULES = `
 
 You are signed in to a company's own business app with a test account. Be careful:
 - Never do anything that cannot be undone or that reaches other people: do not run, submit or approve
@@ -76,47 +75,11 @@ You are signed in to a company's own business app with a test account. Be carefu
   tell the viewer to click it.
 - If you see a sign-in or login page, reply {"do":"fail","why":"The saved login has expired - log in again from the dashboard."}.`;
 
-function parseJson(text) {
-  const s = text.indexOf('{'), e = text.lastIndexOf('}');
-  if (s < 0 || e < s) throw new Error(`No JSON in model reply: ${text.slice(0, 200)}`);
-  return JSON.parse(text.slice(s, e + 1));
-}
-
-async function chat(messages, usage, maxTokens = 900) {
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) throw new Error('OPENROUTER_API_KEY is not set, so Claude cannot plan the video.');
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Title': 'docs-to-video' },
-    body: JSON.stringify({
-      model: MODEL, messages, max_tokens: maxTokens, temperature: 0,
-      provider: { order: ['anthropic'], allow_fallbacks: true },
-      usage: { include: true },
-    }),
-  });
-  if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  const data = await res.json();
-  usage.calls += 1;
-  usage.costUsd += Number(data.usage?.cost || 0);
-  usage.inputTokens += data.usage?.prompt_tokens || 0;
-  usage.outputTokens += data.usage?.completion_tokens || 0;
-  return data.choices?.[0]?.message?.content || '';
-}
-
-async function snapshot(page) {
-  let snap = '';
-  try { snap = await page.locator('body').ariaSnapshot({ timeout: 8000 }); } catch (e) { snap = `(snapshot failed: ${e.message.split('\n')[0]})`; }
-  snap = snap.split('\n').filter((l) => !l.trim().startsWith('- /url:')).join('\n');
-  return snap.length > SNAPSHOT_CHARS ? `${snap.slice(0, SNAPSHOT_CHARS)}\n... (truncated)` : snap;
-}
-
-const describe = (a) => `${a.do} ${a.target ? JSON.stringify(a.target) : a.url || a.key || (a.text ? `until "${a.text}" (${a.seconds || 120}s max)` : '')}${a.value ? ` value="${a.value}"` : ''}`;
-
 const slugify = (s) => String(s || 'video').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || 'video';
 
 export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState, log = console.log }) {
   const start = new URL(startUrl || '/', baseUrl).toString();
-  const usage = { calls: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, model: MODEL };
+  const usage = newUsage(AUTHOR_MODEL);
   const actions = [];
   const history = [];
   let errors = 0;
@@ -140,10 +103,10 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
       const reply = parseJson(await chat([{ role: 'system', content: system }, { role: 'user', content: user }], usage));
 
       if (reply.do === 'done') { log(`plan: done after ${actions.length} actions`); break; }
-      if (reply.do === 'fail') throw new Error(`Claude stopped: ${reply.why || 'blocked'}`);
+      if (reply.do === 'fail') throw new Error(`The AI stopped: ${reply.why || 'blocked'}`);
 
       const step = { do: reply.do, target: reply.target, value: reply.value, key: reply.key, url: reply.url, text: reply.text, seconds: reply.seconds, gone: reply.gone === true, narration: reply.narration };
-      // Claude sometimes puts the wait text in "target"; treat it as the text to wait for.
+      // The AI sometimes puts the wait text in "target"; treat it as the text to wait for.
       if (step.do === 'wait' && !step.text && step.target?.text) { step.text = step.target.text; delete step.target; }
       if (step.do === 'wait') delete step.target;
       try {
@@ -166,7 +129,7 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
         if (errors >= MAX_ERRORS) throw new Error(`Could not complete the steps: ${e.message.split('\n')[0]}`);
       }
     }
-    if (!actions.length) throw new Error('Claude did not find any steps to perform.');
+    if (!actions.length) throw new Error('The AI did not find any steps to perform.');
   } catch (e) {
     e.screenshot = await page.screenshot({ type: 'jpeg', quality: 70 }).catch(() => null);
     throw e;
@@ -179,7 +142,7 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
   const outline = parseJson(await chat([
     { role: 'system', content: 'You write short how-to video storyboards. Reply with ONLY one JSON object.' },
     { role: 'user', content: `Goal of the video: ${prompt}\n\nThese browser actions were performed, in order:\n${list}\n\n${SCRIPT_RULES}\n\nGroup them into 2 to 5 scenes (steps), in order, using every action index exactly once. Return:\n{"title": "short task-style title in sentence case, starting with a verb, e.g. Create a reimbursement (capitalise only names and product terms)", "description": "one sentence", "answersQuestions": ["3 ways a user might ask for this"], "intro": "spoken opening, max 20 words, following the intro rule", "checks": ["2-3 short things the viewer can check to confirm it worked"], "scenes": [{"chapter": "2-4 word step title", "narration": "1-2 short spoken sentences, max 25 words, following the narration rules", "steps": [0, 1]}]}` },
-  ], usage, 1500));
+  ], usage, { maxTokens: 1500 }));
 
   const used = new Set();
   let scenes = (outline.scenes || []).map((s) => ({
@@ -188,7 +151,7 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
     steps: (s.steps || []).filter((i) => Number.isInteger(i) && actions[i] && !used.has(i) && used.add(i)).map((i) => toStep(actions[i])),
   })).filter((s) => s.steps.length);
   if (used.size !== actions.length) {
-    // Fallback: one scene per action, using Claude's narration ideas.
+    // Fallback: one scene per action, using the AI's narration ideas.
     scenes = actions.map((a, i) => ({ chapter: `Step ${i + 1}`, narration: a.narration || describe(a), steps: [toStep(a)] }));
   }
   scenes.at(-1).steps.push({ do: 'pause', ms: 1500 });

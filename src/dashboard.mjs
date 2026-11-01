@@ -96,7 +96,7 @@ a.btn{display:inline-block;padding:7px 14px;border-radius:8px;border:1px solid v
 .err{background:#fef3f2;border:1px solid #fecdca;color:#b42318;padding:10px 14px;border-radius:8px;margin-bottom:14px}
 .empty{color:var(--muted)}
 </style></head><body><main>
-<h1>Docs to Video</h1><p class="sub">Describe a how-to video, or pick a ready-made storyboard. Claude plans the steps, Playwright records them in headless Chrome on Render, and videos are stored in MongoDB. <a href="/ui/voices">Compare voices</a></p>
+<h1>Docs to Video</h1><p class="sub">Describe a how-to video, or pick a ready-made storyboard. An AI (through OpenRouter) plans the steps, Playwright records them in headless Chrome on Render, and videos are stored in MongoDB. <a href="/ui/voices">Compare voices</a></p>
 ${error ? `<div class="err">${esc(error)}</div>` : ''}
 <div class="card" style="margin-bottom:16px"><form method="post" action="/ui/prompt">
 <label for="prompt"><strong>Describe the video</strong></label>
@@ -107,7 +107,7 @@ ${logins.length ? `<div style="flex:0;min-width:200px"><label for="login"><stron
 ${voiceSelect('voice-p')}
 <div style="flex:0;white-space:nowrap;padding-bottom:9px"><label class="inline meta"><input type="checkbox" name="planOnly" value="1"> Plan only</label></div>
 <div style="flex:0"><button type="submit">Plan and record</button></div></div>
-<p class="meta">Claude works out the clicks on the real site, then the video is recorded. Takes about 2–4 minutes. Sites that show a robot check won't work, and it never types passwords or completes purchases. For apps that need a login (like Miter staging), add a saved login below and pick it under "Signed in as"; leave "Start at" empty to start where you logged in.</p>
+<p class="meta">The AI works out the clicks on the real site, then the video is recorded. Takes about 2–4 minutes. Sites that show a robot check won't work, and it never types passwords or completes purchases. For apps that need a login (like Miter staging), add a saved login below and pick it under "Signed in as"; leave "Start at" empty to start where you logged in.</p>
 </form></div>
 <div class="card"><form method="post" action="/ui/make"><div class="row"><div>
 <label for="sb"><strong>Or pick a ready-made storyboard</strong></label>
@@ -130,28 +130,28 @@ ${voiceSelect('voice-s')}
 ${jobs.length ? `<table><thead><tr><th>Video</th><th>Status</th><th>Queued</th><th>Result</th></tr></thead><tbody>
 ${jobs.map((j) => {
   const c = j.cost;
-  const cost = c ? ` &middot; <span title="Claude planning $${c.planning.toFixed(4)} · voice $${c.voice.toFixed(4)} (${c.voiceChars} characters) · server $${c.server.toFixed(4)} (${c.serverSec}s)">cost $${c.total.toFixed(3)} <span class="meta">(Claude $${c.planning.toFixed(3)} · voice $${c.voice.toFixed(3)} · server $${c.server.toFixed(3)})</span></span>`
+  const cost = c ? ` &middot; <span title="AI planning and fixes $${c.planning.toFixed(4)} · voice $${c.voice.toFixed(4)} (${c.voiceChars} characters) · server $${c.server.toFixed(4)} (${c.serverSec}s)">cost $${c.total.toFixed(3)} <span class="meta">(AI $${c.planning.toFixed(3)} · voice $${c.voice.toFixed(3)} · server $${c.server.toFixed(3)})</span></span>`
     : j.planUsage ? ` &middot; planning $${j.planUsage.costUsd.toFixed(2)}` : '';
   const steps = j.storyboard && j.type === 'prompt' ? ` &middot; <a href="/ui/jobs/${j._id}/storyboard">view steps</a>` : '';
   const result = j.status === 'done' ? `v${j.result?.version}, ${(j.result?.sizeBytes / 1e6).toFixed(1)} MB${cost}${steps}`
     : j.status === 'planned' ? `planned${cost}${steps} <form method="post" action="/ui/record/${j._id}" style="display:inline"><button class="ghost" style="padding:3px 10px;margin-left:6px">Record it</button></form>`
-    : j.status === 'failed' ? `${esc((j.error || '').split('\n')[0].slice(0, 220))}${j.failShot ? ` <a href="/ui/jobs/${j._id}/fail.jpg" target="_blank">see the screen</a>` : ''} ${/^Claude stopped/.test(j.error || '')
+    : j.status === 'failed' ? `${esc((j.error || '').split('\n')[0].slice(0, 220))}${j.failShot ? ` <a href="/ui/jobs/${j._id}/fail.jpg" target="_blank">see the screen</a>` : ''} ${/^(Claude|The AI) stopped/.test(j.error || '')
       // Claude stopped on purpose (robot check, bot block, login wall): retrying would hit the same wall.
       ? '<span class="meta" style="margin-left:6px">This site blocks automated browsers, so retrying won\'t help. Try a different site.</span>'
       : `<form method="post" action="/ui/retry/${j._id}" style="display:inline"><button class="ghost" style="padding:3px 10px;margin-left:6px">Retry</button></form>`}`
-    : j.status === 'running' ? `${j.stage === 'planning' ? 'Claude is planning the steps...' : 'recording...'}` : '';
+    : j.status === 'running' ? `${j.stage === 'planning' ? 'The AI is planning the steps...' : 'recording...'}` : '';
   return `<tr><td>${esc(j.storyboard?.title || j.prompt)}${j.type === 'prompt' ? ' <span class="meta">(from prompt)</span>' : ''}</td><td>${statusPill(j.status)}</td><td class="meta">${ago(j.createdAt)}</td><td class="meta">${result}</td></tr>`;
 }).join('')}
 </tbody></table>` : '<p class="empty">No jobs yet.</p>'}
 
 <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap"><h2>Video library</h2>
-${videos.length ? `<form method="post" action="/ui/rerecord-all" onsubmit="return confirm('Re-record every video from its saved steps? No Claude cost; takes about 2 minutes per video.')"><button class="ghost">Re-record all</button></form>` : ''}</div>
+${videos.length ? `<form method="post" action="/ui/rerecord-all" onsubmit="return confirm('Re-record every video from its saved steps? No AI cost unless a step needs fixing; takes about 2 minutes per video.')"><button class="ghost">Re-record all</button></form>` : ''}</div>
 ${videos.length ? `<div class="grid">${videos.map((v) => `<div class="card vid"><a href="/v/${esc(v.slug)}"><img src="/videos/${esc(v.slug)}/thumbnail?v=${v.version}" alt=""></a>
 <h3>${esc(v.title)}</h3><div class="meta">${statusPill(v.status)} &nbsp;v${v.version} &middot; ${v.durationSec}s &middot; ${(v.sizeBytes / 1e6).toFixed(1)} MB &middot; ${v.narrated ? `narrated${v.voiceName ? ` by ${esc(v.voiceName.replace(/ \(.*/, ''))}` : ''}` : 'captions only'}${v.trimmedSec ? ` &middot; ${v.trimmedSec}s dead time trimmed` : ''}${v.lastCost ? ` &middot; $${v.lastCost.total.toFixed(3)}` : ''}</div>
 ${v.needsAttention ? `<div class="err" style="margin:10px 0 0;font-size:13px"><strong>Steps no longer work</strong> (the app probably changed): ${esc(v.needsAttention.slice(0, 200))}</div>` : ''}
 ${v.qa?.fixes?.length ? `<div class="meta" style="margin-top:6px;color:#5925dc">↻ Fixed automatically: ${esc(v.qa.fixes.join(' '))}</div>` : ''}
 ${v.qa && !v.qa.ok ? `<details style="margin-top:8px"><summary style="color:#b54708">⚠ ${v.qa.warnings.length} quality warning${v.qa.warnings.length > 1 ? 's' : ''}</summary><ul class="meta" style="margin:6px 0 0;padding-left:18px">${v.qa.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></details>` : v.qa ? '<div class="meta" style="margin-top:6px;color:#067647">✓ Quality checks passed</div>' : ''}
-<div class="actions"><a class="btn" href="/v/${esc(v.slug)}">Watch</a><a class="btn" href="/videos/${esc(v.slug)}/video?v=${v.version}" download="${esc(v.slug)}.mp4">MP4</a>${v.storyboard ? `<a class="btn" href="/videos/${esc(v.slug)}/sop.md?v=${v.version}" download="${esc(v.slug)}-sop.md">SOP</a>` : ''}<form method="post" action="/ui/rerecord/${esc(v.slug)}" class="rerec"><button class="ghost" title="Record again from the saved steps (no Claude cost)">Re-record</button><select name="voice" aria-label="Voice for the re-record" title="Voice for the re-record"><option value="">same voice</option>${VOICES.map((o) => `<option value="${o.id}">${esc(o.label.replace(/ \(.*/, ''))} · ${esc(o.label.match(/\((.*)\)/)?.[1] || '')}</option>`).join('')}</select></form>
+<div class="actions"><a class="btn" href="/v/${esc(v.slug)}">Watch</a><a class="btn" href="/videos/${esc(v.slug)}/video?v=${v.version}" download="${esc(v.slug)}.mp4">MP4</a>${v.storyboard ? `<a class="btn" href="/videos/${esc(v.slug)}/sop.md?v=${v.version}" download="${esc(v.slug)}-sop.md">SOP</a>` : ''}<form method="post" action="/ui/rerecord/${esc(v.slug)}" class="rerec"><button class="ghost" title="Record again from the saved steps (no AI cost unless a step needs fixing)">Re-record</button><select name="voice" aria-label="Voice for the re-record" title="Voice for the re-record"><option value="">same voice</option>${VOICES.map((o) => `<option value="${o.id}">${esc(o.label.replace(/ \(.*/, ''))} · ${esc(o.label.match(/\((.*)\)/)?.[1] || '')}</option>`).join('')}</select></form>
 ${v.status !== 'approved' ? `<form method="post" action="/ui/approve/${esc(v.slug)}"><button class="ghost">Approve</button></form>` : ''}</div></div>`).join('')}</div>` : '<p class="empty">No videos yet. Make one above.</p>'}
 </main></body></html>`;
 }

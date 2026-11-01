@@ -15,13 +15,15 @@ export function locate(page, t, label) {
 }
 
 // Performs a step that has already been located. Returns nothing; throws on failure.
-export async function perform(page, loc, step) {
-  if (step.do === 'click') await loc.click();
-  else if (step.do === 'fill' && step.value === '') await loc.fill('');
-  else if (step.do === 'fill') { await loc.click(); await loc.fill(''); await loc.pressSequentially(step.value, { delay: 70 }); }
-  else if (step.do === 'select') await loc.selectOption({ label: step.value });
-  else if (step.do === 'press') await loc.press(step.key || 'Enter');
-  else if (step.do === 'hover') await loc.hover();
+// timeout: how long Playwright keeps trying (default 30 s); the recorder uses less so a stuck step is noticed sooner.
+export async function perform(page, loc, step, { timeout } = {}) {
+  const o = timeout ? { timeout } : {};
+  if (step.do === 'click') await loc.click(o);
+  else if (step.do === 'fill' && step.value === '') await loc.fill('', o);
+  else if (step.do === 'fill') { await loc.click(o); await loc.fill('', o); await loc.pressSequentially(step.value, { delay: 70, ...o }); }
+  else if (step.do === 'select') await loc.selectOption({ label: step.value }, o);
+  else if (step.do === 'press') await loc.press(step.key || 'Enter', o);
+  else if (step.do === 'hover') await loc.hover(o);
   else throw new Error(`Unsupported step: ${step.do}`);
 }
 

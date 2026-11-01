@@ -69,7 +69,7 @@ export async function startWorker() {
         // Saved login (e.g. Miter staging): every browser for this job starts already signed in.
         const loginName = job.login || storyboard?.login;
         const storageState = loginName ? (await loadLogin(db, loginName)).storageState : undefined;
-        // Prompt jobs: Claude plans the storyboard first (skipped on retry if already planned).
+        // Prompt jobs: the AI plans the storyboard first (skipped on retry if already planned).
         if (job.type === 'prompt' && !storyboard) {
           await jobs.updateOne({ _id: job._id }, { $set: { stage: 'planning' } });
           const plan = await authorStoryboard({ prompt: job.prompt, startUrl: job.startUrl, baseUrl, storageState, log });
@@ -90,14 +90,14 @@ export async function startWorker() {
         const saved = await makeVideo({ storyboard, baseUrl, jobId: job._id, storageState, log });
         const fresh = await jobs.findOne({ _id: job._id }, { projection: { planUsage: 1 } });
         // Planning is counted once, on the job that planned it ("Record it" jobs reuse a paid-for plan).
-        const cost = costOf({ planUsd: fresh?.planUsage?.costUsd || 0, voiceChars: saved.voiceChars, voiceUsd: saved.voiceUsd, serverSec: (Date.now() - jobStart) / 1000 });
+        const cost = costOf({ planUsd: (fresh?.planUsage?.costUsd || 0) + (saved.aiUsd || 0), voiceChars: saved.voiceChars, voiceUsd: saved.voiceUsd, serverSec: (Date.now() - jobStart) / 1000 });
         await jobs.updateOne({ _id: job._id }, { $set: { status: 'done', stage: null, finishedAt: new Date(), result: saved, cost } });
         await db.collection('videos').updateOne({ slug: saved.slug }, { $set: { lastCost: cost } });
         state.current = null;
-        log(`done; cost $${cost.total.toFixed(4)} (Claude planning $${cost.planning.toFixed(4)}, voice $${cost.voice.toFixed(4)} for ${cost.voiceChars} chars, server $${cost.server.toFixed(4)} for ${cost.serverSec}s)`);
+        log(`done; cost $${cost.total.toFixed(4)} (AI $${cost.planning.toFixed(4)}, voice $${cost.voice.toFixed(4)} for ${cost.voiceChars} chars, server $${cost.server.toFixed(4)} for ${cost.serverSec}s)`);
       } catch (err) {
         if (state.stopping) { state.current = null; continue; } // shutting down: the job was handed back already
-        // Don't retry when Claude was blocked (CAPTCHA, login wall) or the key is missing.
+        // Don't retry when the AI was blocked (CAPTCHA, login wall) or the key is missing.
         // Save what the screen looked like when it failed, so the dashboard can show it.
         let failShot;
         if (err.screenshot) {
@@ -105,7 +105,7 @@ export async function startWorker() {
           await new Promise((ok) => { up.on('finish', ok); up.on('error', ok); up.end(err.screenshot); });
           failShot = up.id;
         }
-        const retry = job.attempts < 2 && !/Claude stopped|OPENROUTER_API_KEY|did not find any steps|Saved login/.test(err.message);
+        const retry = job.attempts < 2 && !/Claude stopped|AI stopped|OPENROUTER_API_KEY|did not find any steps|Saved login/.test(err.message);
         await jobs.updateOne({ _id: job._id }, { $set: { status: retry ? 'queued' : 'failed', error: err.message.slice(0, 2000), ...(failShot ? { failShot } : {}) } });
         state.current = null;
         log(`failed (${retry ? 'will retry' : 'giving up'}): ${err.message.split('\n')[0]}`);

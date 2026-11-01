@@ -162,7 +162,11 @@ function idleCuts(tl, freezes, voice) {
 
 // Long waits are cut out: shift every later time back by the trimmed amount.
 function applyCuts(tl) {
-  const cuts = (tl.cuts || []).filter((c) => c.end > c.start).sort((a, b) => a.start - b.start);
+  const cuts = [];
+  for (const c of (tl.cuts || []).filter((x) => x.end > x.start).sort((a, b) => a.start - b.start)) {
+    const last = cuts.at(-1); // merge overlapping cuts so no time is removed twice
+    if (last && c.start <= last.end) { last.end = Math.max(last.end, c.end); if (last.kind !== c.kind) last.kind = last.kind || c.kind; } else cuts.push({ ...c });
+  }
   if (!cuts.length) return { timeline: tl, cuts: [], select: '', trimmedSec: 0 };
   const map = (t) => t - cuts.reduce((n, c) => n + (t >= c.end ? c.end - c.start : t > c.start ? t - c.start : 0), 0);
   const timeline = {
@@ -174,7 +178,7 @@ function applyCuts(tl) {
   return {
     timeline,
     // Only long waits get an "N minutes later" label; trimmed idle moments are seamless.
-    cuts: cuts.filter((c) => c.kind !== 'idle').map((c) => ({ at: map(c.start) / 1000, skippedSec: (c.end - c.start) / 1000 })),
+    cuts: cuts.filter((c) => !c.kind || c.kind === 'wait').map((c) => ({ at: map(c.start) / 1000, skippedSec: (c.end - c.start) / 1000 })),
     trimmedSec: cuts.reduce((n, c) => n + c.end - c.start, 0) / 1000,
     select: `select='${keep}',setpts=N/${FPS}/TB,`,
   };
