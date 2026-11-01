@@ -7,7 +7,10 @@ export const VOICES = [
 ];
 
 // The default comes from TTS_MODEL / TTS_VOICE on the service (Paul if unset).
+import { get } from './settings.mjs';
 export function defaultVoice() {
+  const picked = VOICES.find((v) => v.id === get('voice'));
+  if (picked) return picked;
   const model = process.env.TTS_MODEL || 'mistralai/voxtral-mini-tts-3-0';
   const voice = process.env.TTS_VOICE || 'en_paul_neutral';
   return VOICES.find((v) => v.model === model && v.voices.includes(voice))

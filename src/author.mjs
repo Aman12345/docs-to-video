@@ -7,7 +7,7 @@ import { chromium } from 'playwright';
 // Keep the browser alive when the server is asked to stop, so the worker decides what happens to the job.
 const LAUNCH = { handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false };
 import { locate, perform, performPageStep } from './locate.mjs';
-import { AUTHOR_MODEL, chat, parseJson, snapshot, describe, newUsage } from './ai.mjs';
+import { authorModel, chat, parseJson, snapshot, describe, newUsage } from './ai.mjs';
 
 const MAX_ACTIONS = 22; // Miter AI flows need room: popups, navigation, form, chat, approve, waits
 const MAX_ERRORS = 4;
@@ -79,7 +79,8 @@ const slugify = (s) => String(s || 'video').toLowerCase().replace(/[^a-z0-9]+/g,
 
 export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState, log = console.log }) {
   const start = new URL(startUrl || '/', baseUrl).toString();
-  const usage = newUsage(AUTHOR_MODEL);
+  const model = authorModel();
+  const usage = newUsage(model);
   const actions = [];
   const history = [];
   let errors = 0;
@@ -100,7 +101,7 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
         `Actions so far:\n${history.length ? history.map((h, i) => `${i + 1}. ${h}`).join('\n') : '(none yet)'}`,
         `Accessibility snapshot:\n${await snapshot(page)}`,
       ].join('\n\n');
-      const reply = parseJson(await chat([{ role: 'system', content: system }, { role: 'user', content: user }], usage));
+      const reply = parseJson(await chat([{ role: 'system', content: system }, { role: 'user', content: user }], usage, { model }));
 
       if (reply.do === 'done') { log(`plan: done after ${actions.length} actions`); break; }
       if (reply.do === 'fail') throw new Error(`The AI stopped: ${reply.why || 'blocked'}`);
@@ -142,7 +143,7 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
   const outline = parseJson(await chat([
     { role: 'system', content: 'You write short how-to video storyboards. Reply with ONLY one JSON object.' },
     { role: 'user', content: `Goal of the video: ${prompt}\n\nThese browser actions were performed, in order:\n${list}\n\n${SCRIPT_RULES}\n\nGroup them into 2 to 5 scenes (steps), in order, using every action index exactly once. Return:\n{"title": "short task-style title in sentence case, starting with a verb, e.g. Create a reimbursement (capitalise only names and product terms)", "description": "one sentence", "answersQuestions": ["3 ways a user might ask for this"], "intro": "spoken opening, max 20 words, following the intro rule", "checks": ["2-3 short things the viewer can check to confirm it worked"], "scenes": [{"chapter": "2-4 word step title", "narration": "1-2 short spoken sentences, max 25 words, following the narration rules", "steps": [0, 1]}]}` },
-  ], usage, { maxTokens: 1500 }));
+  ], usage, { model, maxTokens: 1500 }));
 
   const used = new Set();
   let scenes = (outline.scenes || []).map((s) => ({

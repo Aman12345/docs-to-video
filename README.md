@@ -127,6 +127,14 @@ Pick a voice per video in the dashboard (both request forms, and next to Re-reco
 the video, so re-recording keeps it. The default is whatever TTS_MODEL / TTS_VOICE are set to. If a voice
 fails, the video falls back to the default voice instead of losing narration. Voices are listed in src/voices.mjs.
 
+### Settings page
+
+`/ui/settings` (linked from the dashboard) changes the AI and voice defaults without a redeploy: planning
+model, takeover model (search OpenRouter's model list, with prices and whether a model reads screenshots),
+takeover on/off, tries per broken step, thinking effort for OpenAI GPT models, and the default voice.
+Saved in MongoDB (`settings` collection) and picked up by the next job. An empty box falls back to the
+Render environment variable, then to the built-in default; the page shows which one is in use.
+
 ### AI takeover when a step stops working
 
 Re-records replay saved steps with no AI. If a step fails (a renamed or moved button, a new popup, a slow

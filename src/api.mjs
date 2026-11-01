@@ -1,5 +1,6 @@
 // video-api: the one front door for Slack, the support agent and client share links.
 // Runs as a Render web service. Videos stream straight out of MongoDB GridFS.
+import { loadSettings } from './settings.mjs';
 import { isVoice } from './voices.mjs';
 import http from 'node:http';
 import { ObjectId } from 'mongodb';
@@ -152,7 +153,9 @@ const server = http.createServer(async (req, res) => {
 });
 
 export async function startApi() {
-  await ensureIndexes(await getDb());
+  const db = await getDb();
+  await ensureIndexes(db);
+  await loadSettings(db);
   await new Promise((resolve) => server.listen(PORT, resolve));
   console.log(`video-api listening on ${PORT}`);
   return server;

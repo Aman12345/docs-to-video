@@ -1,6 +1,7 @@
 // A small web page for the demo: pick a storyboard, click "Make video", watch the job,
 // play and approve the result. Protected with a password when DEMO_PASSWORD is set.
-import { AUTHOR_MODEL, REPAIR_MODEL, chat, parseJson, newUsage } from './ai.mjs';
+import { authorModel, repairModel, chat, parseJson, newUsage } from './ai.mjs';
+import { SETTINGS, setting, saveSettings } from './settings.mjs';
 import crypto from 'node:crypto';
 import { VOICES, defaultVoice, isVoice, perVideo } from './voices.mjs';
 import fs from 'node:fs/promises';
@@ -63,6 +64,70 @@ export async function queueRerecords(db, filter = {}, source = 'rerecord', voice
 
 const redirect = (res, to = '/') => res.writeHead(303, { Location: to }).end();
 
+// ---- Settings page: AI models and defaults, saved in MongoDB ----
+// OpenRouter's public model list (no key needed), cached for an hour, for the model pickers.
+let modelCache = { at: 0, list: [] };
+async function openRouterModels() {
+  if (Date.now() - modelCache.at < 3600_000 && modelCache.list.length) return modelCache.list;
+  try {
+    const r = await fetch('https://openrouter.ai/api/v1/models');
+    const data = (await r.json()).data || [];
+    modelCache = { at: Date.now(), list: data.filter((m) => !m.id.includes(':')).map((m) => ({
+      id: m.id, name: m.name,
+      inM: Number(m.pricing?.prompt || 0) * 1e6, outM: Number(m.pricing?.completion || 0) * 1e6,
+      images: (m.architecture?.input_modalities || []).includes('image'),
+      text: (m.architecture?.output_modalities || ['text']).includes('text'),
+    })).filter((m) => m.text) };
+  } catch { /* keep the old list */ }
+  return modelCache.list;
+}
+const price = (m) => (m ? `$${+m.inM.toFixed(2)} in / $${+m.outM.toFixed(2)} out per million tokens${m.images ? ' · reads screenshots' : ' · text only'}` : 'not in OpenRouter\'s list');
+const FROM = { settings: 'set here', render: 'from Render', default: 'built-in default' };
+
+function settingsPage(models, { msg, err } = {}) {
+  const byId = new Map(models.map((m) => [m.id, m]));
+  const cur = Object.fromEntries(Object.keys(SETTINGS).map((k) => [k, setting(k)]));
+  const val = (k) => (cur[k].from === 'settings' ? cur[k].value : '');
+  const note = (k, shown = cur[k].value) => `<span class="meta">In use: <strong>${esc(shown || '—')}</strong> (${FROM[cur[k].from]})</span>`;
+  const plan = cur.authorModel.value, take = cur.repairModel.value || plan;
+  const sel = (name, opts, value) => `<select name="${name}">${opts.map(([v, l]) => `<option value="${esc(v)}"${v === value ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Settings</title>
+<style>:root{--line:#e4e7ec;--muted:#667085;--brand:#3b5bdb}*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,sans-serif;background:#f7f8fa;color:#1d2433}
+main{max-width:760px;margin:0 auto;padding:24px 16px 48px}h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:0 0 12px}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}.meta{color:var(--muted);font-size:13px}
+label{display:block;font-weight:600;margin:14px 0 4px}label:first-of-type{margin-top:0}input,select{width:100%;font:inherit;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:#fff}
+.price{display:block;color:var(--muted);font-size:13px;margin-top:4px}button{font:inherit;font-weight:600;background:var(--brand);color:#fff;border:0;border-radius:8px;padding:10px 18px;cursor:pointer}
+.ok{background:#ecfdf3;border:1px solid #abefc6;color:#067647;padding:10px 14px;border-radius:8px;margin-bottom:14px}.err{background:#fef3f2;border:1px solid #fecdca;color:#b42318;padding:10px 14px;border-radius:8px;margin-bottom:14px}
+.row{display:flex;gap:12px;flex-wrap:wrap}.row>div{flex:1;min-width:200px}a{color:var(--brand)}</style></head><body><main>
+<p class="meta"><a href="/">← Dashboard</a></p><h1>Settings</h1>
+<p class="meta">Changes apply from the next video; no redeploy needed. Leave a box empty to use the Render setting or the built-in default.</p>
+${msg ? `<div class="ok">${esc(msg)}</div>` : ''}${err ? `<div class="err">${esc(err)}</div>` : ''}
+<form method="post" action="/ui/settings">
+<section class="card"><h2>AI models (through OpenRouter)</h2>
+<label for="authorModel">Planning model</label>
+<input id="authorModel" name="authorModel" list="models" value="${esc(val('authorModel'))}" placeholder="${esc(cur.authorModel.from === 'settings' ? '' : plan)}" autocomplete="off" spellcheck="false">
+<span class="price">Plans each new video from your description. ${note('authorModel')} · ${esc(price(byId.get(plan)))}</span>
+<label for="repairModel">Takeover model</label>
+<input id="repairModel" name="repairModel" list="models" value="${esc(val('repairModel'))}" placeholder="same as planning (${esc(plan)})" autocomplete="off" spellcheck="false">
+<span class="price">Fixes a step that stopped working while recording; it looks at screenshots. ${note('repairModel', take)} · ${esc(price(byId.get(take)))}</span>
+<datalist id="models">${models.map((m) => `<option value="${esc(m.id)}">${esc(m.name)} · ${esc(price(m))}</option>`).join('')}</datalist>
+<p class="meta" style="margin:12px 0 0">Type to search ${models.length || 'OpenRouter\'s'} models, e.g. <code>gpt-6.1-terra</code> or <code>claude</code>. <a href="/ui/ai-check" target="_blank">Test the models in use</a> (asks each one a small question).</p>
+</section>
+<section class="card"><h2>AI takeover</h2>
+<div class="row"><div><label>When a step stops working</label>${sel('repair', [['', `Render / default (${cur.repair.from === 'settings' ? 'on' : cur.repair.value})`], ['on', 'Let the AI fix it'], ['off', 'Stop and report the error']], val('repair'))}
+<span class="price">${note('repair')}</span></div>
+<div><label>Tries per broken step</label><input name="repairMaxTurns" type="number" min="1" max="8" value="${esc(val('repairMaxTurns'))}" placeholder="${esc(cur.repairMaxTurns.value)}"><span class="price">${note('repairMaxTurns')}</span></div></div>
+<label>Thinking effort (OpenAI GPT models only)</label>${sel('reasoningEffort', [['', `Render / default (${cur.reasoningEffort.from === 'settings' ? 'low' : cur.reasoningEffort.value})`], ['low', 'Low — fastest and cheapest'], ['medium', 'Medium'], ['high', 'High — slowest, for tricky screens']], val('reasoningEffort'))}
+<span class="price">${note('reasoningEffort')}</span>
+</section>
+<section class="card"><h2>Voice</h2>
+<label>Default voice for new videos</label>${sel('voice', [['', 'Render setting (TTS_MODEL / TTS_VOICE)'], ...VOICES.map((o) => [o.id, `${o.label} · ${perVideo(o)}`])], val('voice'))}
+<span class="price">Preselected in the request forms; you can still pick another voice per video. In use: <strong>${esc(defaultVoice().label)}</strong>. <a href="/ui/voices">Listen to the voices</a></span>
+</section>
+<button type="submit">Save settings</button>
+</form></main></body></html>`;
+}
+
 // Voice dropdown for the request forms; the service default is preselected.
 const pickVoice = (form) => (isVoice(form.voice) ? { voice: form.voice } : {});
 function voiceSelect(id) {
@@ -97,7 +162,7 @@ a.btn{display:inline-block;padding:7px 14px;border-radius:8px;border:1px solid v
 .err{background:#fef3f2;border:1px solid #fecdca;color:#b42318;padding:10px 14px;border-radius:8px;margin-bottom:14px}
 .empty{color:var(--muted)}
 </style></head><body><main>
-<h1>Docs to Video</h1><p class="sub">Describe a how-to video, or pick a ready-made storyboard. An AI (through OpenRouter) plans the steps, Playwright records them in headless Chrome on Render, and videos are stored in MongoDB. <a href="/ui/voices">Compare voices</a></p>
+<h1>Docs to Video</h1><p class="sub">Describe a how-to video, or pick a ready-made storyboard. An AI (through OpenRouter) plans the steps, Playwright records them in headless Chrome on Render, and videos are stored in MongoDB. <a href="/ui/voices">Compare voices</a> · <a href="/ui/settings">Settings</a></p>
 ${error ? `<div class="err">${esc(error)}</div>` : ''}
 <div class="card" style="margin-bottom:16px"><form method="post" action="/ui/prompt">
 <label for="prompt"><strong>Describe the video</strong></label>
@@ -359,11 +424,33 @@ export async function handleDashboard(db, req, res, url) {
     else res.writeHead(502, { 'Content-Type': 'text/plain' }).end(hit.body);
     return true;
   }
+  if (p === '/ui/settings') {
+    const models = await openRouterModels();
+    if (req.method === 'POST') {
+      const form = await readForm(req);
+      const known = new Set(models.map((m) => m.id));
+      for (const k of ['authorModel', 'repairModel']) {
+        const v = (form[k] || '').trim();
+        if (v && known.size && !known.has(v)) {
+          res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' }).end(settingsPage(models, { err: `"${v}" isn't an OpenRouter model id. Pick one from the list (e.g. openai/gpt-6.1-terra).` }));
+          return true;
+        }
+      }
+      if (form.repairMaxTurns && !(Number(form.repairMaxTurns) >= 1 && Number(form.repairMaxTurns) <= 8)) form.repairMaxTurns = '';
+      await saveSettings(db, form);
+      const take = models.find((m) => m.id === repairModel());
+      const warn = take && !take.images ? ` Note: ${take.id} can't read screenshots, so the takeover will only see the page's text.` : '';
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(settingsPage(models, { msg: `Saved. New videos will use these settings.${warn}` }));
+      return true;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }).end(settingsPage(models));
+    return true;
+  }
   if (req.method === 'GET' && p === '/ui/ai-check') {
     // Asks each AI model one tiny question in the same JSON format the planner and takeover use,
     // to confirm the model id works on OpenRouter before relying on it.
     const out = [];
-    for (const [what, model] of [['Planning (AUTHOR_MODEL)', AUTHOR_MODEL], ['Takeover (REPAIR_MODEL)', REPAIR_MODEL]]) {
+    for (const [what, model] of [['Planning', authorModel()], ['Takeover', repairModel()]]) {
       const usage = newUsage(model), t = Date.now();
       try {
         const reply = parseJson(await chat([

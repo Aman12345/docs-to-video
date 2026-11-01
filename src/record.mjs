@@ -7,10 +7,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { locate, perform, performPageStep } from './locate.mjs';
 import { takeOver } from './repair.mjs';
-import { REPAIR_MODEL, newUsage } from './ai.mjs';
+import { repairModel, newUsage } from './ai.mjs';
+import { get } from './settings.mjs';
 
 // AI takeover is on when an OpenRouter key is set; REPAIR=off turns it off.
-const repairOn = () => !!process.env.OPENROUTER_API_KEY && !/^off$/i.test(process.env.REPAIR || '');
+const repairOn = () => !!process.env.OPENROUTER_API_KEY && !/^off$/i.test(get('repair') || '');
 
 // Sharp 1080p: the browser window is 1920x1080 and the app is zoomed to 150%, so it lays out like a
 // 1280x720 screen but is drawn with 1.5x the pixels (screencast frames are captured at window size,
@@ -66,7 +67,7 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
   const timeline = { width: VIEWPORT.width, height: VIEWPORT.height, scenes: [], actions: [], cuts: [] };
   // repairs: steps the AI fixed during this recording; saved into the video's steps afterwards.
   const repairs = [];
-  const repairUsage = newUsage(REPAIR_MODEL);
+  const repairUsage = newUsage(repairModel());
   const done = [];
   let sceneIdx = 0, skipped = 0; // skipped: ms of the current scene that will be trimmed out
   const cut = (start, end, kind) => { if (end - start >= 500) { timeline.cuts.push({ start, end, ...(kind ? { kind } : {}) }); skipped += end - start; } };

@@ -2,9 +2,8 @@
 // button, a new popup, a page that loads slowly), the AI looks at the screen and fixes it so the
 // recording can carry on. It works through OpenRouter (REPAIR_MODEL). Its fix is saved into the
 // video's steps, so the next re-record works without the AI. The time spent thinking is cut from the video.
-import { REPAIR_MODEL, chat, parseJson, snapshot, describe } from './ai.mjs';
-
-const MAX_TURNS = Number(process.env.REPAIR_MAX_TURNS || 4);
+import { repairModel, chat, parseJson, snapshot, describe } from './ai.mjs';
+import { get } from './settings.mjs';
 
 const SYSTEM = `You are fixing a how-to video while it is being recorded. The video replays saved browser steps.
 One step just failed, usually because the app changed: a button was renamed or moved, a popup or banner is
@@ -35,6 +34,8 @@ failed with its error, and what the video is about. Reply with ONLY one JSON obj
 // act(step): performs a step on screen the same way the recorder does (cursor glide, ring, click); throws if it fails.
 // clock(): ms since the recording started, used to mark the thinking time so it can be cut.
 export async function takeOver(page, { storyboard, scene, step, error, done, act, clock, usage, log = console.log }) {
+  const MAX_TURNS = Math.min(Math.max(Number(get('repairMaxTurns')) || 4, 1), 8);
+  const REPAIR_MODEL = repairModel();
   const tried = [];
   const extra = []; // "first" actions that worked
   const pauses = [];

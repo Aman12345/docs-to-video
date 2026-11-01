@@ -1,6 +1,7 @@
 // video-worker: takes queued jobs from MongoDB one at a time, records the video,
 // and stores the result back in MongoDB. In production it runs as its own Render
 // background worker; in the demo, src/server.mjs runs it inside the web service.
+import { loadSettings } from './settings.mjs';
 import { getDb, ensureIndexes, closeDb, bucket } from './store.mjs';
 import { makeVideo } from './pipeline.mjs';
 import { authorStoryboard } from './author.mjs';
@@ -57,6 +58,7 @@ export async function startWorker() {
         { sort: { createdAt: 1 }, returnDocument: 'after' },
       );
       if (!job) { await sleep(POLL_MS); continue; }
+      await loadSettings(db); // pick up changes from the Settings page
 
       state.current = job._id;
       const beat = setInterval(() => jobs.updateOne({ _id: job._id, status: 'running' }, { $set: { heartbeatAt: new Date() } }).catch(() => {}), HEARTBEAT_MS);

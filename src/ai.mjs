@@ -1,14 +1,16 @@
-// One place that talks to the AI through OpenRouter, so the model is a setting, not code:
-//   AUTHOR_MODEL — plans videos from a prompt
-//   REPAIR_MODEL — takes over when a saved step stops working during recording (defaults to AUTHOR_MODEL)
+// One place that talks to the AI through OpenRouter, so the model is a setting, not code. Set on the
+// dashboard's Settings page (or AUTHOR_MODEL / REPAIR_MODEL on Render):
+//   planning model — plans videos from a prompt
+//   takeover model — takes over when a saved step stops working during recording (defaults to the planning model)
 // Any OpenRouter model id works; screenshots are only sent to the takeover, which needs a model that
 // can read images.
-export const AUTHOR_MODEL = process.env.AUTHOR_MODEL || 'anthropic/claude-opus-5.5';
-export const REPAIR_MODEL = process.env.REPAIR_MODEL || AUTHOR_MODEL;
+import { get } from './settings.mjs';
+export const authorModel = () => get('authorModel');
+export const repairModel = () => get('repairModel') || authorModel();
 
 export const newUsage = (model) => ({ calls: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, model });
 
-export async function chat(messages, usage, { model = AUTHOR_MODEL, maxTokens = 900 } = {}) {
+export async function chat(messages, usage, { model = authorModel(), maxTokens = 900 } = {}) {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error('OPENROUTER_API_KEY is not set, so the AI cannot plan or fix the video.');
   // OpenAI GPT models think before answering, and that thinking counts toward max_tokens: keep the effort
@@ -20,7 +22,7 @@ export async function chat(messages, usage, { model = AUTHOR_MODEL, maxTokens = 
     body: JSON.stringify({
       model, messages,
       ...(reasoning
-        ? { max_tokens: Math.max(maxTokens, 4000), reasoning: { effort: process.env.AI_REASONING_EFFORT || 'low', exclude: true } }
+        ? { max_tokens: Math.max(maxTokens, 4000), reasoning: { effort: get('reasoningEffort') || 'low', exclude: true } }
         : { max_tokens: maxTokens, temperature: 0 }),
       // Anthropic models: prefer Anthropic's own servers, fall back to other hosts if they're busy.
       ...(model.startsWith('anthropic/') ? { provider: { order: ['anthropic'], allow_fallbacks: true } } : {}),
