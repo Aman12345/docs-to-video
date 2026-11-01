@@ -9,7 +9,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ObjectId } from 'mongodb';
-import { bucket } from './store.mjs';
+import { bucket, approveVideo, streamFile } from './store.mjs';
+import { REVIEW_CODES, reviseStoryboard } from './review.mjs';
+import { SCRIPT_RULES } from './author.mjs';
 import { narrationOn } from './compose.mjs';
 import { listLogins, startLive, getLive, liveAction, liveShot, saveLive, closeLive, deleteLogin, cleanName, VIEWPORT } from './logins.mjs';
 
@@ -65,6 +67,73 @@ export async function queueRerecords(db, filter = {}, source = 'rerecord', voice
 }
 
 const redirect = (res, to = '/') => res.writeHead(303, { Location: to }).end();
+
+// ---- Review: AI review results, approval and the review page ----
+const userOf = (req) => { const h = req.headers.authorization || ''; return h.startsWith('Basic ') ? Buffer.from(h.slice(6), 'base64').toString().split(':')[0] || 'someone' : 'someone'; };
+const needsReview = (v) => v.status === 'draft' && (!v.live || v.live.version < v.version);
+function reviewSummary(v) {
+  const r = v.review;
+  if (!r || r.state === 'skipped') return 'AI review didn\'t run; please watch it.';
+  if (r.state === 'failed') return `AI review found ${r.findings.length} problem${r.findings.length > 1 ? 's' : ''} it couldn't fix.`;
+  return r.changed ? `AI review passed; ${r.changed}.` : 'AI review passed.';
+}
+function reviewPills(v) {
+  const pill = (t, c) => `<span class="pill" style="background:${c[0]};color:${c[1]}">${t}</span>`;
+  const out = [];
+  if (v.live) out.push(pill(`Live v${v.live.version}`, ['#ecfdf3', '#067647']));
+  if (needsReview(v)) out.push(pill(`v${v.version} needs review`, ['#fffaeb', '#b54708']));
+  else if (v.status === 'rejected') out.push(pill(`v${v.version} rejected`, ['#fef3f2', '#b42318']));
+  else if (v.status === 'changes-requested') out.push(pill(`v${v.version}: changes requested`, ['#f4f3ff', '#5925dc']));
+  else if (!v.live) out.push(pill(`v${v.version} ${esc(v.status)}`, ['#f2f4f7', '#344054']));
+  return out.join(' ');
+}
+function reviewLine(v) {
+  if (v.live?.approvedBy === 'auto' && v.live.version === v.version) return `<div class="meta" style="margin-top:6px;color:#067647">✓ Approved automatically: ${esc(v.live.reason || 'nothing changed')}</div>`;
+  if (!v.review || !needsReview(v)) return '';
+  const r = v.review;
+  return `<div class="meta" style="margin-top:6px;color:${r.state === 'failed' ? '#b42318' : '#344054'}">${r.state === 'failed' ? '⚠' : r.state === 'passed' ? '✓' : '•'} ${esc(reviewSummary(v))}</div>`;
+}
+function reviewPage(v, { msg } = {}) {
+  const r = v.review || { state: 'skipped', findings: [], fixes: [] };
+  const scenes = v.storyboard?.scenes || [];
+  const liveScenes = v.live?.storyboard?.scenes || [];
+  const step = (s, i) => {
+    const f = (r.findings || []).filter((x) => x.step === i + 1);
+    return `<section class="step${f.length ? ' flagged' : ''}"><div class="txt"><h3>${s.check ? '✓ ' : `${i + 1}. `}${esc(s.chapter)}</h3><p>"${esc(s.narration || '')}"</p>
+      ${liveScenes[i] && liveScenes[i].narration !== s.narration ? `<p class="meta">Live version said: "${esc(liveScenes[i].narration || '')}"</p>` : ''}
+      ${f.map((x) => `<p class="finding">⚠ <strong>${esc(REVIEW_CODES[x.code] || x.code)}</strong>: ${esc(x.note)}</p>`).join('')}</div>
+      <div class="shots"><figure><img loading="lazy" src="/ui/review/${esc(v.slug)}/steps/${i + 1}?v=${v.version}" alt=""><figcaption>New (v${v.version})</figcaption></figure>
+      ${v.live?.files?.steps?.[i] ? `<figure><img loading="lazy" src="/videos/${esc(v.slug)}/steps/${i + 1}?v=${v.live.version}" alt=""><figcaption>Live (v${v.live.version})</figcaption></figure>` : ''}</div></section>`;
+  };
+  const verdict = r.state === 'passed' ? ['#ecfdf3', '#067647', `✓ AI review passed${r.changed ? `, but ${r.changed}` : ''}`]
+    : r.state === 'failed' ? ['#fef3f2', '#b42318', `⚠ AI review found ${r.findings.length} problem${r.findings.length > 1 ? 's' : ''} it couldn't fix`]
+      : ['#f2f4f7', '#344054', 'AI review didn\'t run on this version'];
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Review: ${esc(v.title)}</title>
+<style>*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,sans-serif;background:#f7f8fa;color:#1d2433}main{max-width:1100px;margin:0 auto;padding:24px 16px 60px}h1{font-size:22px;margin:4px 0}
+.card{background:#fff;border:1px solid #e4e7ec;border-radius:12px;padding:16px 18px;margin-bottom:16px}.meta{color:#667085;font-size:13px}a{color:#3b5bdb}
+.vids{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}video{width:100%;border-radius:10px;background:#111827}
+.verdict{padding:10px 14px;border-radius:10px;font-weight:600;margin-bottom:10px}.step{display:grid;grid-template-columns:1fr 1.6fr;gap:16px;background:#fff;border:1px solid #e4e7ec;border-radius:12px;padding:14px;margin-bottom:12px}
+.step.flagged{border-color:#fda29b}.step h3{margin:0 0 6px;font-size:16px}.step p{margin:0 0 6px}.finding{color:#b42318}.shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+figure{margin:0}figure img{width:100%;border-radius:8px;border:1px solid #e4e7ec}figcaption{font-size:12px;color:#667085}
+.actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}textarea{width:100%;min-height:80px;font:inherit;padding:8px 10px;border:1px solid #d0d5dd;border-radius:8px}
+button{font:inherit;font-weight:600;border-radius:8px;padding:9px 16px;cursor:pointer;border:1px solid #d0d5dd;background:#fff}.approve{background:#067647;color:#fff;border-color:#067647}.changes{background:#680BBD;color:#fff;border-color:#680BBD}.reject{color:#b42318}
+.ok{background:#ecfdf3;border:1px solid #abefc6;color:#067647;padding:10px 14px;border-radius:8px;margin-bottom:14px}@media (max-width:720px){.step{grid-template-columns:1fr}}</style></head><body><main>
+<p class="meta"><a href="/">← Dashboard</a></p><h1>${esc(v.title)}</h1>
+<div class="meta">Draft v${v.version}${v.live ? ` · live is v${v.live.version} (approved ${v.live.approvedBy === 'auto' ? 'automatically' : `by ${esc(v.live.approvedBy || 'someone')}`})` : ' · new video, nothing live yet'}</div>
+${msg ? `<div class="ok" style="margin-top:12px">${esc(msg)}</div>` : ''}
+<section class="card" style="margin-top:14px"><div class="verdict" style="background:${verdict[0]};color:${verdict[1]}">${verdict[2]}</div>
+${r.fixes?.length ? `<p class="meta">Fixed automatically before you saw it: ${esc(r.fixes.join(' '))}</p>` : ''}
+${(r.findings || []).length ? `<ul>${r.findings.map((x) => `<li>Step ${x.step}: <strong>${esc(REVIEW_CODES[x.code] || x.code)}</strong>: ${esc(x.note)}</li>`).join('')}</ul>` : ''}
+${v.reviewNote ? `<p class="meta">Last change request: "${esc(v.reviewNote.note)}" → ${esc(v.reviewNote.summary || '')}</p>` : ''}</section>
+<section class="card"><div class="vids"><div><strong>New (v${v.version})</strong><video controls preload="metadata" src="/ui/review/${esc(v.slug)}/video?v=${v.version}"></video></div>
+${v.live ? `<div><strong>Live now (v${v.live.version})</strong><video controls preload="metadata" src="/videos/${esc(v.slug)}/video?v=${v.live.version}"></video></div>` : ''}</div></section>
+<h2 style="font-size:17px">Step by step</h2>${scenes.map(step).join('')}
+<section class="card"><h2 style="font-size:17px;margin-top:0">Your decision</h2><div class="actions">
+<form method="post" action="/ui/review/${esc(v.slug)}/approve"><p>Make v${v.version} the live version: share links and the support agent use it from now on.</p><button class="approve">Approve v${v.version}</button></form>
+<form method="post" action="/ui/review/${esc(v.slug)}/changes"><p>Describe what to change. The AI updates the narration, titles or typed example values, then it's re-recorded and comes back here.</p><textarea name="note" required placeholder="e.g. Say 'Choose a team member' instead of 'Select Jared', and use $85.00 as the amount"></textarea><button class="changes">Request changes</button></form>
+<form method="post" action="/ui/review/${esc(v.slug)}/reject"><p>Don't use v${v.version}.${v.live ? ` v${v.live.version} stays live.` : ''}</p><button class="reject">Reject v${v.version}</button></form>
+</div></section></main></body></html>`;
+}
 
 // ---- Job activity: what a job did, step by step ----
 // Turns log lines into plain words for the jobs table and the activity page.
@@ -175,6 +244,10 @@ ${msg ? `<div class="ok">${esc(msg)}</div>` : ''}${err ? `<div class="err">${esc
 <div class="row"><div><label>When a step stops working</label>${sel('repair', [['', `Render / default (${cur.repair.from === 'settings' ? 'on' : cur.repair.value})`], ['on', 'Let the AI fix it'], ['off', 'Stop and report the error']], val('repair'))}
 <span class="price">${note('repair')}</span></div>
 <div><label>Tries per broken step</label><input name="repairMaxTurns" type="number" min="1" max="8" value="${esc(val('repairMaxTurns'))}" placeholder="${esc(cur.repairMaxTurns.value)}"><span class="price">${note('repairMaxTurns')}</span></div></div>
+<label>AI review of every finished video</label>${sel('aiReview', [['', `Render / default (${cur.aiReview.from === 'settings' ? 'on' : cur.aiReview.value})`], ['on', 'On: check each video and fix what it can (up to 2 rounds)'], ['off', 'Off']], val('aiReview'))}
+<span class="price">Looks at one screenshot per step against the narration: wrong screen, loading screens, visible personal data, an ending that doesn't show the result. About 1.5¢ per video with the takeover model. ${note('aiReview')}</span>
+<label>Approve unchanged re-records automatically</label>${sel('autoApprove', [['', `Render / default (${cur.autoApprove.from === 'settings' ? 'on' : cur.autoApprove.value})`], ['on', 'On: if the AI review passes and every step looks the same as the live version'], ['off', 'Off: a person approves every new version']], val('autoApprove'))}
+<span class="price">New videos and changed screens always wait for a person on the review page. ${note('autoApprove')}</span>
 <label>"Check your work" ending</label>${sel('checkStep', [['', `Render / default (${cur.checkStep.from === 'settings' ? 'on' : cur.checkStep.value})`], ['on', 'End each video by showing the result'], ['off', 'No ending step']], val('checkStep'))}
 <span class="price">The AI picks the finished result, clears anything covering it, highlights it and writes one line about it. Added once per video, then saved with its steps. ${note('checkStep')}</span>
 <label>Thinking effort (OpenAI GPT models only)</label>${sel('reasoningEffort', [['', `Render / default (${cur.reasoningEffort.from === 'settings' ? 'low' : cur.reasoningEffort.value})`], ['low', 'Low — fastest and cheapest'], ['medium', 'Medium'], ['high', 'High — slowest, for tricky screens']], val('reasoningEffort'))}
@@ -201,7 +274,7 @@ function voiceSelect(id) {
     `<option value="${o.id}"${o.id === def ? ' selected' : ''}>${esc(o.label)} · ${esc(perVideo(o))}</option>`).join('')}</select></div>`;
 }
 
-function page({ sbs, jobs, videos, busy, error, logins = [] }) {
+function page({ sbs, jobs, videos, busy, error, msg, logins = [] }) {
   const statusPill = (s) => `<span class="pill ${s}">${esc(s)}</span>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Docs to Video demo</title>${busy ? '<meta http-equiv="refresh" content="4">' : ''}
@@ -228,7 +301,9 @@ a.btn{display:inline-block;padding:7px 14px;border-radius:8px;border:1px solid v
 .empty{color:var(--muted)}
 </style></head><body><main>
 <h1>Docs to Video</h1><p class="sub">Describe a how-to video, or pick a ready-made storyboard. An AI (through OpenRouter) plans the steps, Playwright records them in headless Chrome on Render, and videos are stored in MongoDB. <a href="/ui/voices">Compare voices</a> · <a href="/ui/settings">Settings</a></p>
-${error ? `<div class="err">${esc(error)}</div>` : ''}
+${error ? `<div class="err">${esc(error)}</div>` : ''}${msg ? `<div style="background:#ecfdf3;border:1px solid #abefc6;color:#067647;padding:10px 14px;border-radius:8px;margin-bottom:14px">${esc(msg)}</div>` : ''}
+${videos.some(needsReview) ? `<div class="card" style="margin-bottom:16px;border-color:#d6bbfb;background:#faf5ff"><h2 style="margin:0 0 8px;font-size:17px">Needs review (${videos.filter(needsReview).length})</h2>
+${videos.filter(needsReview).map((v) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-top:1px solid #e9d7fe;flex-wrap:wrap"><div><strong>${esc(v.title)}</strong> <span class="meta">v${v.version}${v.live ? ` · live is v${v.live.version}` : ' · new video'}</span><br><span class="meta">${esc(reviewSummary(v))}</span></div><a class="btn" style="background:#680BBD;color:#fff;border-color:#680BBD" href="/ui/review/${esc(v.slug)}">Review</a></div>`).join('')}</div>` : ''}
 <div class="card" style="margin-bottom:16px"><form method="post" action="/ui/prompt">
 <label for="prompt"><strong>Describe the video</strong></label>
 <textarea id="prompt" name="prompt" class="plain" required placeholder="e.g. Search Wikipedia for Ada Lovelace and open her article"></textarea>
@@ -281,12 +356,13 @@ ${jobs.map((j) => {
 <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap"><h2>Video library</h2>
 ${videos.length ? `<form method="post" action="/ui/rerecord-all" onsubmit="return confirm('Re-record every video from its saved steps? No AI cost unless a step needs fixing; takes about 2 minutes per video.')"><button class="ghost">Re-record all</button></form>` : ''}</div>
 ${videos.length ? `<div class="grid">${videos.map((v) => `<div class="card vid"><a href="/v/${esc(v.slug)}"><img src="/videos/${esc(v.slug)}/thumbnail?v=${v.version}" alt=""></a>
-<h3>${esc(v.title)}</h3><div class="meta">${statusPill(v.status)} &nbsp;v${v.version} &middot; ${v.durationSec}s &middot; ${(v.sizeBytes / 1e6).toFixed(1)} MB &middot; ${v.narrated ? `narrated${v.voiceName ? ` by ${esc(v.voiceName.replace(/ \(.*/, ''))}` : ''}` : 'captions only'}${v.trimmedSec ? ` &middot; ${v.trimmedSec}s dead time trimmed` : ''}${v.lastCost ? ` &middot; $${v.lastCost.total.toFixed(3)}` : ''}</div>
+<h3>${esc(v.title)}</h3><div class="meta">${reviewPills(v)} &middot; ${v.durationSec}s &middot; ${(v.sizeBytes / 1e6).toFixed(1)} MB &middot; ${v.narrated ? `narrated${v.voiceName ? ` by ${esc(v.voiceName.replace(/ \(.*/, ''))}` : ''}` : 'captions only'}${v.trimmedSec ? ` &middot; ${v.trimmedSec}s dead time trimmed` : ''}${v.lastCost ? ` &middot; $${v.lastCost.total.toFixed(3)}` : ''}</div>
 ${v.needsAttention ? `<div class="err" style="margin:10px 0 0;font-size:13px"><strong>Steps no longer work</strong> (the app probably changed): ${esc(v.needsAttention.slice(0, 200))}</div>` : ''}
 ${v.qa?.fixes?.length ? `<div class="meta" style="margin-top:6px;color:#5925dc">↻ Fixed automatically: ${esc(v.qa.fixes.join(' '))}</div>` : ''}
+${reviewLine(v)}
 ${v.qa && !v.qa.ok ? `<details style="margin-top:8px"><summary style="color:#b54708">⚠ ${v.qa.warnings.length} quality warning${v.qa.warnings.length > 1 ? 's' : ''}</summary><ul class="meta" style="margin:6px 0 0;padding-left:18px">${v.qa.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></details>` : v.qa ? '<div class="meta" style="margin-top:6px;color:#067647">✓ Quality checks passed</div>' : ''}
 <div class="actions"><a class="btn" href="/v/${esc(v.slug)}">Watch</a><a class="btn" href="/videos/${esc(v.slug)}/video?v=${v.version}" download="${esc(v.slug)}.mp4">MP4</a>${v.storyboard ? `<a class="btn" href="/videos/${esc(v.slug)}/sop.md?v=${v.version}" download="${esc(v.slug)}-sop.md">SOP</a>` : ''}<form method="post" action="/ui/rerecord/${esc(v.slug)}" class="rerec"><button class="ghost" title="Record again from the saved steps (no AI cost unless a step needs fixing)">Re-record</button><select name="voice" aria-label="Voice for the re-record" title="Voice for the re-record"><option value="">same voice</option>${VOICES.map((o) => `<option value="${o.id}">${esc(o.label.replace(/ \(.*/, ''))} · ${esc(o.label.match(/\((.*)\)/)?.[1] || '')}</option>`).join('')}</select></form>
-${v.status !== 'approved' ? `<form method="post" action="/ui/approve/${esc(v.slug)}"><button class="ghost">Approve</button></form>` : ''}</div></div>`).join('')}</div>` : '<p class="empty">No videos yet. Make one above.</p>'}
+${needsReview(v) ? `<a class="btn" style="background:#680BBD;color:#fff;border-color:#680BBD" href="/ui/review/${esc(v.slug)}">Review v${v.version}</a>` : ''}</div></div>`).join('')}</div>` : '<p class="empty">No videos yet. Make one above.</p>'}
 </main></body></html>`;
 }
 
@@ -584,8 +660,42 @@ ${rows.map(card).join('')}</main></body></html>`);
     return redirect(res);
   }
   if (req.method === 'POST' && p.startsWith('/ui/approve/')) {
-    await db.collection('videos').updateOne({ slug: decodeURIComponent(p.split('/')[3]) }, { $set: { status: 'approved', approvedAt: new Date() } });
+    await approveVideo(db, decodeURIComponent(p.split('/')[3]), userOf(req));
     return redirect(res);
+  }
+  // Review page: /ui/review/:slug (+ /video, /steps/:n for the draft's files; /approve, /changes, /reject)
+  if (p.startsWith('/ui/review/')) {
+    const [, , , rawSlug, action, n] = p.split('/');
+    const slug = decodeURIComponent(rawSlug || '');
+    const v = await db.collection('videos').findOne({ slug });
+    if (!v) return redirect(res, `/?error=${encodeURIComponent('That video was not found.')}`);
+    if (req.method === 'GET' && action === 'video') { await streamFile(db, req, res, v.files.mp4, 'private, max-age=300'); return true; }
+    if (req.method === 'GET' && action === 'steps' && v.files.steps?.[Number(n) - 1]) { await streamFile(db, req, res, v.files.steps[Number(n) - 1], 'private, max-age=300'); return true; }
+    if (req.method === 'POST' && action === 'approve') {
+      await approveVideo(db, slug, userOf(req));
+      return redirect(res, `/?msg=${encodeURIComponent(`Approved: v${v.version} of "${v.title}" is now live.`)}`);
+    }
+    if (req.method === 'POST' && action === 'reject') {
+      await db.collection('videos').updateOne({ slug }, { $set: { status: 'rejected', rejectedAt: new Date(), rejectedBy: userOf(req) } });
+      return redirect(res, `/?msg=${encodeURIComponent(`Rejected v${v.version} of "${v.title}".${v.live ? ` v${v.live.version} stays live.` : ''}`)}`);
+    }
+    if (req.method === 'POST' && action === 'changes') {
+      const note = ((await readForm(req)).note || '').trim().slice(0, 1000);
+      if (!note || !v.storyboard) return redirect(res, `/ui/review/${encodeURIComponent(slug)}`);
+      const usage = newUsage(repairModel());
+      let revised;
+      try { revised = await reviseStoryboard({ storyboard: v.storyboard, note, usage, scriptRules: SCRIPT_RULES }); } catch (e) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(reviewPage(v, { msg: `The AI couldn't apply that change: ${e.message.slice(0, 200)}` }));
+        return true;
+      }
+      await db.collection('jobs').insertOne({ status: 'queued', storyboard: revised.storyboard, rerecordOf: slug, requestedChanges: note, attempts: 0, createdAt: new Date(), source: 'review',
+        planUsage: { costUsd: usage.costUsd, calls: usage.calls, model: usage.model }, ...poolForNewJob() });
+      await kickRunners(db).catch(() => {});
+      await db.collection('videos').updateOne({ slug }, { $set: { status: 'changes-requested', reviewNote: { note, summary: revised.summary, at: new Date(), by: userOf(req) } } });
+      return redirect(res, `/?msg=${encodeURIComponent(`Changes requested: ${revised.summary} It's being re-recorded and will come back for review.`)}`);
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }).end(reviewPage(v));
+    return true;
   }
   if (req.method === 'GET' && p === '/') {
     const [sbs, jobs, videos, logins] = await Promise.all([
@@ -597,7 +707,7 @@ ${rows.map(card).join('')}</main></body></html>`);
     const busy = jobs.some((j) => j.status === 'queued' || j.status === 'running');
     // The list query leaves out full storyboards; the steps link only needs to know one exists.
     jobs.forEach((j) => { if (j.storyboard) j.storyboard = { title: j.storyboard.title }; });
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(page({ sbs, jobs, videos, busy, logins, error: url.searchParams.get('error') }));
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(page({ sbs, jobs, videos, busy, logins, error: url.searchParams.get('error'), msg: url.searchParams.get('msg') }));
     return true;
   }
   return false;

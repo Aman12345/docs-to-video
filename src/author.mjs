@@ -49,7 +49,7 @@ Rules:
 // matters, segment, don't read the screen aloud, conversational "you"), tight screen-recording scripts
 // (short spoken sentences, verb first, exact values), and the Microsoft / Google style guides for UI
 // instructions (location first, exact label, "select" / "enter" / "turn on", no element-type words).
-const SCRIPT_RULES = `How to write the narration (it is spoken by a voice and shown as captions):
+export const SCRIPT_RULES = `How to write the narration (it is spoken by a voice and shown as captions):
 - Sound like a calm, friendly product trainer talking to one person. Use "you", present tense, active voice.
   No hype, filler or jokes, and never "simply", "just", "go ahead and", "let's", "now I'll", "as you can see".
 - One idea per sentence; keep sentences under about 15 words. Each step's narration: 1-2 sentences, max 25 words.

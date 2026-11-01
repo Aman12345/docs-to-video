@@ -174,6 +174,27 @@ holds while the line is spoken, under a green "✓ Result" chip. It isn't counte
 New videos get it while being planned; older videos get it on their next re-record, and it is then saved
 with their steps, so it's only done once. Turn it off on the Settings page ("Check your work" ending).
 
+### Review and approval
+
+Viewers (share links, the support agent's search, video links) always get the **approved ("live") version**.
+A new recording is a draft until it's approved, so an unchecked video never replaces a good one.
+
+1. **AI review** (every finished video, ~1.5¢ with the takeover model): one screenshot per step, the
+   narration and the request go to the AI, which reports problems in a fixed format (step, code, note):
+   narration-mismatch, screen-not-ready, wrong-screen, sensitive-data, ending-wrong. Screenshot text is
+   treated as data, never instructions.
+2. **Automatic fixes, at most 2 rounds**, each re-checked: narration rewritten to match the screen (new
+   voice, no re-record); re-record with longer waits; re-record once for a wrong screen; the ending picked
+   again with the reviewer's note. Sensitive data is never fixed automatically.
+3. **Auto-approval**: a re-record whose review passed and whose screens match the live version (at most
+   0.6% of any step's screen different; `AUTO_APPROVE_MAX_CHANGE_PCT`) goes live without a person.
+4. **People** review everything else on `/ui/review/:slug` (linked from "Needs review" on the dashboard):
+   the new and live videos side by side, before/after screenshots per step, the AI's findings, and
+   **Approve**, **Request changes** (the AI applies the note to narration, titles or typed values, then
+   it's re-recorded and comes back) or **Reject** (the live version stays).
+
+Both are switchable on the Settings page (AI review, auto-approval).
+
 ### AI takeover when a step stops working
 
 Re-records replay saved steps with no AI. If a step fails (a renamed or moved button, a new popup, a slow

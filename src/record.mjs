@@ -41,7 +41,7 @@ const sceneMinMs = (text, voiceMs = 0) => Math.max(3500, (text.split(/\s+/).leng
 
 // slow: used for an automatic re-record after a blank-screen warning; gives pages more time to load.
 // addCheck: the steps have no "Check your work" ending yet, so the AI adds one at the end (speak(text) makes its voice).
-export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs = [], storageState, slow = false, log = console.log, addCheck = false, speak }) {
+export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs = [], storageState, slow = false, log = console.log, addCheck = false, speak, checkNote }) {
   await fs.mkdir(outDir, { recursive: true });
   const videoPath = path.join(outDir, 'raw.webm');
   const browser = await chromium.launch(LAUNCH); // headless; Render has no display
@@ -179,7 +179,7 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
       const p0 = now();
       try {
         log('Check your work: the AI is finding the result to show');
-        const plan = await planCheck(page, { storyboard, usage: repairUsage, log,
+        const plan = await planCheck(page, { storyboard, usage: repairUsage, log, note: checkNote,
           tryShow: async (pl) => locate(page, pl.show).waitFor({ state: 'visible', timeout: 6000 }).then(() => true, () => false) });
         if (plan) {
           const clip = speak ? await speak(plan.narration).catch(() => null) : null;

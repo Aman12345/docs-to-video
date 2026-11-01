@@ -10,7 +10,10 @@ import { introText, outroText } from './narrative.mjs';
 import { voiceById } from './voices.mjs';
 import { isCheck } from './check.mjs';
 import { get } from './settings.mjs';
-import { getDb, ensureIndexes, saveVideo, closeDb } from './store.mjs';
+import { getDb, ensureIndexes, saveVideo, closeDb, downloadFile } from './store.mjs';
+import { reviewVideo, rewriteNarration, compareSteps } from './review.mjs';
+import { newUsage, repairModel } from './ai.mjs';
+import { SCRIPT_RULES } from './author.mjs';
 import { startDemoApp } from './demo-server.mjs';
 
 const secs = (t) => ((Date.now() - t) / 1000).toFixed(1);
@@ -23,7 +26,8 @@ function applyRepairs(storyboard, repairs) {
   return sb;
 }
 
-export async function makeVideo({ storyboard, baseUrl, jobId, storageState, log = console.log }) {
+// rerecord: this is a re-record of an existing video (it may be approved automatically if nothing changed).
+export async function makeVideo({ storyboard, baseUrl, jobId, storageState, log = console.log, rerecord = false }) {
   const workDir = await fs.mkdtemp(path.join(os.tmpdir(), `video-${storyboard.id}-`));
   try {
     const brand = await getBrand();
@@ -42,7 +46,7 @@ export async function makeVideo({ storyboard, baseUrl, jobId, storageState, log 
     let voiceChars = voiced ? texts.reduce((n, x) => n + x.length, 0) : 0;
     let aiUsd = 0;
     const aiFixes = [];
-    const recordIt = async (slow = false) => {
+    const recordIt = async (slow = false, checkNote) => {
       const t1 = Date.now();
       let r;
       try {
@@ -52,7 +56,7 @@ export async function makeVideo({ storyboard, baseUrl, jobId, storageState, log 
           const dir = await fs.mkdtemp(path.join(workDir, 'check-'));
           return (await synthesizeVoice([text], dir, log, clips.voice || wanted))[0] || null;
         } : null;
-        r = await record({ storyboard, baseUrl, outDir: workDir, brand, voiceMs: sceneVoiceMs(), storageState, slow, log, addCheck, speak });
+        r = await record({ storyboard, baseUrl, outDir: workDir, brand, voiceMs: sceneVoiceMs(), storageState, slow, log, addCheck, speak, checkNote });
       } catch (e) {
         e.aiUsd = aiUsd + (e.repairUsage?.costUsd || 0);
         throw e;
@@ -110,13 +114,88 @@ export async function makeVideo({ storyboard, baseUrl, jobId, storageState, log 
       composed = await editIt(take, clips);
       fixes.push(composed.qa.codes.includes('blank-step') ? 'Re-recorded once with longer waits; a step still ends on a blank screen, so check it.' : 'A step ended on a blank screen, so it was re-recorded automatically with longer waits.');
     }
-    composed.qa.fixes = [...aiFixes, ...fixes];
+    // AI review: check the finished video and fix what can be fixed, at most twice. Then a person decides.
+    //  narration-mismatch -> rewrite that narration, new voice, re-edit (no re-record)
+    //  screen-not-ready   -> re-record with longer waits
+    //  wrong-screen       -> re-record once (usually a page that loaded late)
+    //  ending-wrong       -> the AI picks the result again, told what was wrong
+    //  sensitive-data     -> no automatic fix: a person must look
+    const reviewFixes = [];
+    let findings = [];
+    let reviewed = false;
+    if (get('aiReview') !== 'off' && process.env.OPENROUTER_API_KEY) {
+      const usage = newUsage(repairModel());
+      try {
+        for (let round = 0; ; round++) {
+          findings = await reviewVideo({ storyboard, stepFrames: composed.stepFrames, outDir: workDir, usage, log });
+          reviewed = true;
+          const fixable = findings.filter((f) => f.code !== 'sensitive-data');
+          if (!fixable.length || round >= 2) break;
+          log(`AI review round ${round + 1}: fixing ${fixable.length} problem(s)`);
+          let reRecord = false, slow = false, checkNote;
+          const narr = fixable.filter((f) => f.code === 'narration-mismatch');
+          if (narr.length) {
+            const r = await rewriteNarration({ storyboard, findings: narr, usage, scriptRules: SCRIPT_RULES });
+            if (r.changed.length) {
+              storyboard = r.storyboard;
+              for (const i of r.changed) if (take.timeline.scenes[i]) take.timeline.scenes[i].narration = storyboard.scenes[i].narration;
+              reviewFixes.push(`The AI review rewrote the narration of step${r.changed.length > 1 ? 's' : ''} ${r.changed.map((i) => i + 1).join(', ')} to match the screen.`);
+            }
+          }
+          if (fixable.some((f) => f.code === 'screen-not-ready')) { reRecord = true; slow = true; reviewFixes.push('The AI review saw a screen that hadn\'t finished loading, so it was re-recorded with longer waits.'); }
+          if (fixable.some((f) => f.code === 'wrong-screen')) { reRecord = true; reviewFixes.push(`The AI review saw the wrong screen (${fixable.find((f) => f.code === 'wrong-screen').note}), so it was re-recorded.`); }
+          const ending = fixable.find((f) => f.code === 'ending-wrong');
+          if (ending && storyboard.scenes.some(isCheck)) {
+            const idx = storyboard.scenes.findIndex(isCheck);
+            storyboard = { ...storyboard, scenes: storyboard.scenes.filter((s) => !isCheck(s)) };
+            if (voiced) clips = Object.assign([...clips.slice(0, idx + 1), ...clips.slice(idx + 2)], { voice: clips.voice });
+            reRecord = true; checkNote = ending.note;
+            reviewFixes.push(`The AI review said the ending didn't show the result (${ending.note}), so the AI picked the result again.`);
+          }
+          // New narration needs a new voice (the whole set, so every clip matches).
+          texts.splice(0, texts.length, intro, ...storyboard.scenes.map((s) => s.narration || ''), outro);
+          if (voiced && narr.length) {
+            const again = await synthesizeVoice(texts, await fs.mkdtemp(path.join(workDir, 'voice-')), log, clips.voice || wanted);
+            if (again.length === texts.length) { clips = Object.assign(again, { voice: again.voice || clips.voice }); voiceChars += texts.reduce((n, x) => n + x.length, 0); }
+          }
+          if (reRecord) take = await recordIt(slow, checkNote);
+          composed = await editIt(take, clips);
+        }
+      } catch (e) {
+        log(`AI review couldn't finish (${String(e.message).split('\n')[0].slice(0, 160)}); a person should check this video`);
+        findings = findings.length ? findings : [];
+        reviewed = false;
+      }
+      aiUsd += usage.costUsd;
+    }
+    composed.review = { state: !reviewed ? 'skipped' : findings.length ? 'failed' : 'passed', findings, fixes: reviewFixes, model: repairModel(), at: new Date() };
+    composed.qa.fixes = [...aiFixes, ...fixes, ...reviewFixes];
     composed.voiceName = composed.narrated ? clips.voice?.label || null : null;
     log(`composed ${composed.durationSec}s ${brand.name}-branded video in ${secs(t)}s (audio: ${composed.narrated ? 'voiceover + captions' : 'captions only'}; trimmed ${composed.trimmedSec}s of dead time; quality: ${composed.qa.ok ? 'ok' : composed.qa.warnings.length + ' warning(s)'})`);
     if (composed.qa.warnings.length) log(`quality warnings: ${composed.qa.warnings.join(' ')}`);
     const db = await getDb();
     await ensureIndexes(db);
-    const saved = await saveVideo(db, { storyboard, composed, jobId });
+    // Auto-approval: a re-record that passed the AI review and whose screens match the live version goes
+    // live straight away. New videos, changed screens and anything flagged wait for a person.
+    let approve = null;
+    const prev = rerecord ? await db.collection('videos').findOne({ slug: storyboard.id }, { projection: { live: 1, status: 1, files: 1 } }) : null;
+    const liveSteps = prev?.live?.files?.steps || (prev?.status === 'approved' ? prev.files?.steps : null);
+    if (rerecord && composed.review.state === 'passed' && get('autoApprove') !== 'off' && liveSteps?.length) {
+      const dir = await fs.mkdtemp(path.join(workDir, 'live-'));
+      const livePaths = [];
+      for (const [i, id] of liveSteps.entries()) livePaths.push(await downloadFile(db, id, path.join(dir, `live-${i}.jpg`)).catch(() => null));
+      const cmp = livePaths.every(Boolean) ? await compareSteps(livePaths, composed.stepFrames || []) : { changed: true, reason: 'the live screenshots could not be read' };
+      const limit = Number(process.env.AUTO_APPROVE_MAX_CHANGE_PCT || 0.6); // % of a step's screen allowed to differ
+      if (!cmp.changed && cmp.max <= limit) {
+        approve = { by: 'auto', reason: `The AI review passed and every step looks the same as the live version (at most ${cmp.max.toFixed(1)}% of a screen changed).` };
+        log(`approved automatically: screens match the live version (at most ${cmp.max.toFixed(1)}% changed)`);
+      } else {
+        const worst = cmp.pct?.length ? cmp.pct.indexOf(cmp.max) + 1 : 0;
+        composed.review.changed = cmp.reason || `step ${worst}'s screen changed (${cmp.max.toFixed(1)}% different from the live version)`;
+        log(`waiting for a person: ${composed.review.changed}`);
+      }
+    } else log(`waiting for a person: ${!rerecord ? 'new video' : composed.review.state !== 'passed' ? `AI review ${composed.review.state}` : get('autoApprove') === 'off' ? 'auto-approval is off' : 'nothing approved yet to compare with'}`);
+    const saved = await saveVideo(db, { storyboard, composed, jobId, approve });
     log(`stored in MongoDB GridFS: ${saved.slug} v${saved.version}, ${(saved.sizeBytes / 1e6).toFixed(2)} MB`);
     if (process.env.KEEP_OUTPUT) await fs.cp(workDir, process.env.KEEP_OUTPUT, { recursive: true });
     const used = clips.voice;

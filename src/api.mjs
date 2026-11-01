@@ -5,7 +5,7 @@ import { kickRunners } from './runners.mjs';
 import { isVoice } from './voices.mjs';
 import http from 'node:http';
 import { ObjectId } from 'mongodb';
-import { getDb, ensureIndexes, bucket } from './store.mjs';
+import { getDb, ensureIndexes, bucket, approveVideo, served, streamFile } from './store.mjs';
 import { handleDashboard, queueRerecords, basicAuthOk } from './dashboard.mjs';
 import { sopMarkdown, guideHtml } from './sop.mjs';
 
@@ -21,22 +21,6 @@ const readBody = (req) => new Promise((resolve, reject) => {
 });
 
 // Streams a GridFS file, honouring HTTP Range requests so browsers can seek in the video.
-async function streamFile(db, req, res, fileId, cache = 'public, max-age=300') {
-  const file = await db.collection('videofiles.files').findOne({ _id: fileId });
-  if (!file) return json(res, 404, { error: 'file not found' });
-  const type = file.metadata?.contentType || 'application/octet-stream';
-  const range = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
-  if (range) {
-    const start = range[1] ? Number(range[1]) : 0;
-    const end = range[2] ? Math.min(Number(range[2]), file.length - 1) : file.length - 1;
-    if (start > end) return res.writeHead(416, { 'Content-Range': `bytes */${file.length}` }).end();
-    res.writeHead(206, { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Length': end - start + 1, 'Content-Range': `bytes ${start}-${end}/${file.length}`, 'Cache-Control': cache });
-    return bucket(db).openDownloadStream(fileId, { start, end: end + 1 }).pipe(res);
-  }
-  res.writeHead(200, { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Length': file.length, 'Cache-Control': cache });
-  bucket(db).openDownloadStream(fileId).pipe(res);
-}
-
 function sharePage(v) {
   const chapters = v.chapters.map((c) => `<li><a href="#t=${c.startSec}" onclick="document.querySelector('video').currentTime=${c.startSec};return false">${esc(c.title)}</a> <span>${Math.floor(c.startSec / 60)}:${String(Math.floor(c.startSec % 60)).padStart(2, '0')}</span></li>`).join('');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -50,7 +34,7 @@ h1{font-size:24px;margin:0 0 6px}main>p{color:#667085;margin:0 0 18px}
 .jump{font:inherit;font-size:13px;border:1px solid #d0d5dd;background:#fff;border-radius:8px;padding:5px 10px;cursor:pointer;color:#344054}
 .checks{background:#ecfdf3;border:1px solid #abefc6;border-radius:12px;padding:14px 18px;margin-top:14px}.checks h3{margin:0 0 6px;font-size:16px;color:#067647}.checks ul{margin:0;padding-left:20px}
 @media (max-width:720px){.step{grid-template-columns:1fr}}</style></head>
-<body><main><h1>${esc(v.title)}</h1><p>${esc(v.description)}</p>
+<body><main>${v.status !== 'approved' && !v.live ? '<p style="background:#fffaeb;border:1px solid #fedf89;color:#b54708;padding:8px 12px;border-radius:8px;font-size:14px">Draft: this video hasn\'t been reviewed yet.</p>' : ''}<h1>${esc(v.title)}</h1><p>${esc(v.description)}</p>
 <video controls preload="metadata" poster="/videos/${v.slug}/thumbnail?v=${v.version}" src="/videos/${v.slug}/video?v=${v.version}"><track kind="captions" srclang="en" label="English" src="/videos/${v.slug}/captions?v=${v.version}"></video>
 ${v.storyboard ? guideHtml(v) : `<h2 style="font-size:17px">Steps</h2><ol>${chapters}</ol>`}
 <p style="font-size:13px;margin-top:18px">Keyboard: Space or K to play/pause, ← → to skip 5 seconds, F for full screen.</p></main>
@@ -116,10 +100,12 @@ const server = http.createServer(async (req, res) => {
       if (!authed) return json(res, 401, { error: 'unauthorized' });
       const q = url.searchParams.get('q') || '';
       const status = url.searchParams.get('status') || 'approved';
+      // "approved": videos with an approved (live) version; their live title and chapters are returned.
+      const filter = status === 'approved' ? { $or: [{ live: { $exists: true } }, { status: 'approved' }] } : { status };
       const hits = await db.collection('videos')
-        .find({ $text: { $search: q }, status }, { projection: { score: { $meta: 'textScore' }, slug: 1, title: 1, description: 1, durationSec: 1, chapters: 1 } })
+        .find({ $text: { $search: q }, ...filter }, { projection: { score: { $meta: 'textScore' }, slug: 1, title: 1, description: 1, durationSec: 1, chapters: 1, 'live.title': 1, 'live.description': 1, 'live.durationSec': 1, 'live.chapters': 1, 'live.version': 1 } })
         .sort({ score: { $meta: 'textScore' } }).limit(Number(url.searchParams.get('limit')) || 5).toArray();
-      return json(res, 200, hits.map((h) => ({ ...h, shareUrl: `${PUBLIC_URL}/v/${h.slug}`, thumbnailUrl: `${PUBLIC_URL}/videos/${h.slug}/thumbnail` })));
+      return json(res, 200, hits.map(({ live, ...h }) => ({ ...h, ...(status === 'approved' && live ? live : {}), shareUrl: `${PUBLIC_URL}/v/${h.slug}`, thumbnailUrl: `${PUBLIC_URL}/videos/${h.slug}/thumbnail` })));
     }
 
     // Re-record videos after an app release (call from a deploy hook, CI or a schedule).
@@ -132,13 +118,15 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && parts[0] === 'videos' && parts[2] === 'approve') {
       if (!authed) return json(res, 401, { error: 'unauthorized' });
-      const r = await db.collection('videos').updateOne({ slug: parts[1] }, { $set: { status: 'approved', approvedAt: new Date() } });
-      return json(res, r.matchedCount ? 200 : 404, { slug: parts[1], status: r.matchedCount ? 'approved' : 'not found' });
+      const version = await approveVideo(db, parts[1], 'api');
+      return json(res, version ? 200 : 404, { slug: parts[1], status: version ? 'approved' : 'not found', version });
     }
 
     if (req.method === 'GET' && (parts[0] === 'videos' || parts[0] === 'v') && parts[1]) {
-      const v = await db.collection('videos').findOne({ slug: parts[1] });
-      if (!v) return json(res, 404, { error: 'video not found' });
+      // Viewers get the approved (live) version; a newer draft stays on the review page until approved.
+      const latest = await db.collection('videos').findOne({ slug: parts[1] });
+      if (!latest) return json(res, 404, { error: 'video not found' });
+      const v = served(latest);
       if (parts[0] === 'v') return res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(sharePage(v));
       if (!parts[2]) return json(res, 200, v);
       if (parts[2] === 'sop.md') {

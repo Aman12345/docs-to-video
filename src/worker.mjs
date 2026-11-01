@@ -112,7 +112,7 @@ export async function startWorker() {
         }
         if (job.voice) storyboard = { ...storyboard, voice: job.voice }; // saved with the video, so re-records keep it
         await jobs.updateOne({ _id: job._id }, { $set: { stage: 'recording' } });
-        const saved = await makeVideo({ storyboard, baseUrl, jobId: job._id, storageState, log });
+        const saved = await makeVideo({ storyboard, baseUrl, jobId: job._id, storageState, log, rerecord: !!job.rerecordOf });
         const fresh = await jobs.findOne({ _id: job._id }, { projection: { planUsage: 1 } });
         // Planning is counted once, on the job that planned it ("Record it" jobs reuse a paid-for plan).
         const cost = costOf({ planUsd: (fresh?.planUsage?.costUsd || 0) + (saved.aiUsd || 0), voiceChars: saved.voiceChars, voiceUsd: saved.voiceUsd, serverSec: (Date.now() - jobStart) / 1000 });

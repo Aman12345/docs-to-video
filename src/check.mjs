@@ -30,9 +30,10 @@ Each reveal action: {"do": "click" | "press" | "scroll" | "wait", "target": {...
 - If the result isn't on screen and you can't reveal it safely, reply {"skip": "why"}.`;
 
 // Returns {reveal, show, chapter, narration} or null (skipped).
-export async function planCheck(page, { storyboard, usage, log = console.log, tryShow }) {
+export async function planCheck(page, { storyboard, usage, log = console.log, tryShow, note }) {
   const steps = storyboard.scenes.flatMap((s) => s.steps).filter((s) => s.do !== 'pause');
-  let feedback = '';
+  // note: a reviewer's finding about the previous ending ("it shows the title, not the report").
+  let feedback = note ? `A reviewer said the previous ending was wrong: ${note}` : '';
   for (let turn = 0; turn < 2; turn++) {
     const shot = await page.screenshot({ type: 'jpeg', quality: 60 }).catch(() => null);
     const text = [
