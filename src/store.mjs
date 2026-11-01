@@ -5,9 +5,25 @@ import { MongoClient, GridFSBucket } from 'mongodb';
 import fs from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 
+// Accept the common spellings, and say clearly which one (if any) is set. Values are never logged.
+function mongoUri() {
+  const names = ['MONGODB_URI', 'MONGO_URI', 'MONGODB_URL', 'MONGO_URL', 'DATABASE_URL'];
+  const found = names.find((n) => process.env[n]?.trim());
+  const related = Object.keys(process.env).filter((k) => /mongo|database/i.test(k));
+  if (found) {
+    console.log(`MongoDB: using ${found}`);
+    return process.env[found].trim();
+  }
+  if (process.env.NODE_ENV === 'production') {
+    console.error(`MongoDB: no connection string set. Add an environment variable named MONGODB_URI. Related variable names present: ${related.length ? related.join(', ') : 'none'}`);
+    process.exit(1);
+  }
+  return 'mongodb://127.0.0.1:27017';
+}
+
 let client;
 export async function getDb() {
-  if (!client) client = await new MongoClient(process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017').connect();
+  if (!client) client = await new MongoClient(mongoUri()).connect();
   return client.db(process.env.MONGODB_DB || 'docs_to_video');
 }
 export async function closeDb() { await client?.close(); client = undefined; }
