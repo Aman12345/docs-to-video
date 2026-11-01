@@ -9,7 +9,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { checksFor, displayTitle, recapLine } from './narrative.mjs';
+import { displayTitle, recapLine } from './narrative.mjs';
 
 const LAUNCH = { handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false };
 const require = createRequire(import.meta.url);
@@ -60,22 +60,14 @@ function introHtml(brand, sb, minutesLabel) {
 </div>`);
 }
 
+// Closing: short and clean. Logo, a check, "That's it!" and one line. No recap or checklist.
 function closingHtml(brand, sb) {
-  const checks = checksFor(sb);
-  const chips = (checks.length ? checks : sb.scenes.map((s) => s.chapter)).slice(0, 4);
-  const tick = `<svg width="27" height="27" viewBox="0 0 24 24" style="flex:none"><circle cx="12" cy="12" r="12" fill="${brand.primary}"/><path d="M6.8 12.4l3.3 3.3 7-7.4" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-  return page(`<div style="width:1920px;height:1080px;padding:90px 132px;background:#fff;color:#1A1523;display:flex;flex-direction:column;align-items:center;justify-content:space-between;text-align:center">
-  ${logo(brand, 42, true)}
-  <div style="display:flex;flex-direction:column;align-items:center;gap:27px">
-    <div style="width:120px;height:120px;border-radius:50%;background:${brand.primary};display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 21px #F4E9FD">
-      <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
-    <h1 style="margin-top:18px;font-size:84px;line-height:1.08;font-weight:800;letter-spacing:-.02em">You're all set</h1>
-    <p style="font-size:30px;line-height:1.5;color:#5F5670;max-width:1400px">${esc(recapLine(sb, brand))}</p>
-  </div>
-  <div style="display:flex;gap:18px;flex-wrap:wrap;justify-content:center;max-width:1650px">
-    ${chips.map((c) => `<span style="display:flex;align-items:center;gap:13px;background:#F7F2FD;border:1.5px solid #E3D5F5;border-radius:999px;padding:13px 27px;font-size:22px;font-weight:600">${tick}${esc(c)}</span>`).join('')}
-  </div>
-  <p style="font-size:22px;color:#6B6280">${esc(brand.support)}</p>
+  return page(`<div style="width:1920px;height:1080px;padding:90px 132px;background:#fff;color:#1A1523;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:34px;text-align:center">
+  <div style="width:132px;height:132px;border-radius:50%;background:${brand.primary};display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 22px #F4E9FD">
+    <svg width="66" height="66" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+  <h1 style="margin-top:22px;font-size:96px;line-height:1.05;font-weight:800;letter-spacing:-.02em">That's it!</h1>
+  <p style="font-size:34px;line-height:1.45;color:#5F5670;max-width:1400px">${esc(recapLine(sb, brand))}</p>
+  <div style="margin-top:40px">${logo(brand, 40, true)}</div>
 </div>`, { bg: '#fff' });
 }
 

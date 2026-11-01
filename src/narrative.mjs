@@ -28,14 +28,14 @@ export function introText(sb, brand) {
   return `Here's how to ${task(sb.title)}${inProduct(sb, brand)}, in ${steps.length} step${steps.length === 1 ? '' : 's'}: ${list(steps)}.`;
 }
 
+// The video ends on one short line, never a recap of the steps.
 export function outroText(sb, brand) {
-  if (sb.outro) return sb.outro;
-  return `That's it! You can now ${task(sb.title)}${inProduct(sb, brand)}.`;
+  return `And that's how you ${task(sb.title)}${inProduct(sb, brand)}.`;
 }
 
-// One line under "You're all set" on the closing card.
+// The line under "That's it!" on the closing card.
 export function recapLine(sb, brand) {
-  return `You can now ${task(sb.title)}${inProduct(sb, brand)}.`;
+  return `That's how you ${task(sb.title)}${inProduct(sb, brand)}.`;
 }
 
 // Short "check your work" points shown on the closing card and in the written SOP.
