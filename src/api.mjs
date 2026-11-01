@@ -49,7 +49,11 @@ const server = http.createServer(async (req, res) => {
     const db = await getDb();
     const url = new URL(req.url, PUBLIC_URL);
     const parts = url.pathname.split('/').filter(Boolean);
-    const authed = !API_KEY || req.headers.authorization === `Bearer ${API_KEY}`;
+    // Write and search routes need API_KEY (Bearer) if set, otherwise the demo password (Basic auth).
+    const auth = req.headers.authorization || '';
+    const demoPw = process.env.DEMO_PASSWORD;
+    const basicPw = auth.startsWith('Basic ') ? Buffer.from(auth.slice(6), 'base64').toString().split(':').slice(1).join(':') : null;
+    const authed = API_KEY ? auth === `Bearer ${API_KEY}` : demoPw ? basicPw === demoPw : true;
 
     if (url.pathname === '/health') return json(res, 200, { ok: true });
     if (await handleDashboard(db, req, res, url)) return;
