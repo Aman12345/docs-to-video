@@ -111,9 +111,13 @@ Use a test account with demo data: share links are public and videos show whatev
 
 ### Video style
 
-Purple intro card ("How to … in Miter" with the list of steps), full-screen app with a "Step 2 of 4" chip
-top-right and purple caption pills, a pulsing ring around each control before it is clicked, and a white
-"You're all set" closing card with check-your-work chips. Font: Plus Jakarta Sans (bundled via npm).
+Purple intro card ("How to … in Miter" with the list of steps), full-screen app with a "Miter | Step 2 of 4"
+chip top-right and purple caption pills, a pulsing ring around each control before it is clicked, and a short
+white "That's it!" closing card. Font: Plus Jakarta Sans (bundled via npm).
+
+Captions sit at the bottom, and move to the top while the control being used is in the lower 40% of the
+screen, so they never cover it. Zooms work straight from the 1080p recording (no upscaling), so text stays
+sharp; frames outside a zoom are passed through untouched.
 
 ### Quality checks and automatic fixes
 

@@ -72,7 +72,8 @@ function closingHtml(brand, sb) {
 }
 
 const chipHtml = (brand, i, n, sc) => page(`<div id="el" style="display:inline-block;padding:16px">
-  <div style="display:flex;align-items:center;gap:18px;background:rgba(255,255,255,.95);border:1.5px solid #E3D5F5;border-radius:999px;padding:10px 24px 10px 10px;box-shadow:0 10px 30px rgba(60,20,110,.14)">
+  <div style="display:flex;align-items:center;gap:16px;background:rgba(255,255,255,.96);border:1.5px solid #E3D5F5;border-radius:999px;padding:10px 24px 10px 20px;box-shadow:0 10px 30px rgba(60,20,110,.14)">
+    ${logo(brand, 24, true)}<span style="width:1.5px;height:26px;background:#E3D5F5"></span>
     <span style="background:${brand.primary};color:#fff;border-radius:999px;padding:7px 18px;font-size:20px;font-weight:700">Step ${i + 1} of ${n}</span>
     <span style="font-size:23px;font-weight:700;color:#1A1523;white-space:nowrap">${esc(sc.chapter)}</span>
   </div></div>`);

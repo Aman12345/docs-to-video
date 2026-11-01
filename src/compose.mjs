@@ -14,8 +14,6 @@ const FPS = 30;
 const OUT = { width: 1920, height: 1080 };
 // The app fills the whole frame (recorded at 1920x1080).
 const FRAME = { width: 1920, height: 1080, x: 0, y: 0 };
-// Zoom works on an upscaled copy so its movement is smooth instead of stepping pixel by pixel.
-const ZOOM_SRC = { width: 2560, height: 1440 };
 
 function run(cmd, args) {
   return new Promise((resolve, reject) => {
@@ -79,20 +77,21 @@ export async function synthesizeVoice(texts, outDir, log = console.log) {
 
 // Eased zoom toward each action marked "zoom": true in the storyboard.
 function zoomFilter(timeline) {
-  const Z = 1.22, ramp = 0.5; // gentle, so text stays crisp
-  const k = ZOOM_SRC.width / timeline.width;
+  const Z = 1.15, ramp = 0.5; // gentle, so text stays crisp
+  const k = OUT.width / timeline.width;
   const wins = timeline.actions.filter((a) => a.zoom).map((a) => ({
     s: a.start / 1000 - 0.45, e: a.end / 1000 + 0.5,
     cx: (a.box.x + a.box.w / 2) * k, cy: (a.box.y + a.box.h / 2) * k,
   }));
-  if (!wins.length) return `scale=${FRAME.width}:${FRAME.height}:flags=lanczos`;
+  if (!wins.length) return `scale=${FRAME.width}:${FRAME.height}:flags=lanczos`; // already 1920x1080: a no-op
   const T = `(on/${FPS})`;
   const m = (w) => `min(clip((${T}-${w.s.toFixed(3)})/${ramp},0,1),clip((${w.e.toFixed(3)}-${T})/${ramp},0,1))`;
   const z = `1+${wins.map((w) => `${Z - 1}*pow(${m(w)},2)*(3-2*${m(w)})`).join('+')}`;
   const pick = (key, dflt) => wins.reduceRight((acc, w) => `if(between(${T},${w.s.toFixed(3)},${w.e.toFixed(3)}),${w[key].toFixed(1)},${acc})`, dflt);
   const x = `clip(${pick('cx', 'iw/2')}-iw/zoom/2,0,iw-iw/zoom)`;
   const y = `clip(${pick('cy', 'ih/2')}-ih/zoom/2,0,ih-ih/zoom)`;
-  return `scale=${ZOOM_SRC.width}:${ZOOM_SRC.height}:flags=lanczos,zoompan=z='${z}':x='${x}':y='${y}':d=1:fps=${FPS}:s=${FRAME.width}x${FRAME.height}`;
+  // Zoom straight from the 1080p recording: frames between zooms pass through untouched (no resampling).
+  return `zoompan=z='${z}':x='${x}':y='${y}':d=1:fps=${FPS}:s=${FRAME.width}x${FRAME.height}`;
 }
 
 // ---- Dead-time trimming (idea from aidemo) ----
@@ -201,14 +200,24 @@ export async function compose({ rawPath, timeline: rawTimeline, outDir, brand, c
   const pills = await renderCaptions({ texts: [...stepCues.map((c) => c.text), ...cuts.map((c) => laterText(c.skippedSec))], brand, outDir });
   const overlays = []; // { file, x, y, start, dur, fadeIn, fadeOut }
   const W = OUT.width, H = OUT.height;
-  overlays.push({ ...cards.logo, x: W - 38 - cards.logo.w, y: H - 50 - cards.logo.h, start: INTRO, dur: rawDur, fadeIn: 0.3, fadeOut: 0.3 });
   scenes.forEach((s, i) => {
     const chip = cards.chips[i];
     overlays.push({ ...chip, x: W - 20 - chip.w, y: 14, start: INTRO + s.a + 0.1, dur: Math.max(0.6, s.b - s.a - 0.15), fadeIn: 0.3, fadeOut: 0.2 });
   });
+  // Captions sit at the bottom, but move to the top while the control being used (or about to be) is in
+  // the lower part of the screen, so they never cover what the viewer needs to see.
+  const lowAction = (from, to) => timeline.actions.some((a) => {
+    const s0 = INTRO + a.start / 1000 - 1.6, s1 = INTRO + a.end / 1000; // includes the glide and pulsing ring
+    return s0 < to + 0.3 && s1 > from - 0.3 && (a.box.y + a.box.h) / timeline.height > 0.6;
+  });
   stepCues.forEach((c, k) => {
     const pill = pills[k];
-    overlays.push({ ...pill, x: Math.round((W - pill.w) / 2), y: H - 14 - pill.h, start: c.from, dur: Math.max(0.4, c.to - c.from), fadeIn: 0.15, fadeOut: 0.15 });
+    const top = lowAction(c.from, c.to);
+    // At the top, slide left of the step chip if they would touch.
+    const chip = cards.chips[c.scene] || cards.chips[0];
+    const centre = Math.round((W - pill.w) / 2);
+    const x = top && chip ? Math.max(20, Math.min(centre, W - 20 - chip.w - 12 - pill.w)) : centre;
+    overlays.push({ ...pill, x, y: top ? 24 : H - 14 - pill.h, start: c.from, dur: Math.max(0.4, c.to - c.from), fadeIn: 0.15, fadeOut: 0.15 });
   });
   cuts.forEach((c, k) => {
     const pill = pills[stepCues.length + k];
@@ -257,7 +266,7 @@ export async function compose({ rawPath, timeline: rawTimeline, outDir, brand, c
   args.push('-filter_complex', g.join(';'), '-map', '[vout]');
   if (clips.length) args.push('-map', '[aout]', '-c:a', 'aac', '-b:a', '160k');
   args.push('-map_metadata', String(metaIdx), '-map_chapters', String(metaIdx),
-    '-t', total.toFixed(3), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-tune', 'stillimage', '-r', String(FPS),
+    '-t', total.toFixed(3), '-c:v', 'libx264', '-preset', 'faster', '-crf', '16', '-tune', 'stillimage', '-r', String(FPS),
     '-movflags', '+faststart', mp4Path);
   await run('ffmpeg', args);
 

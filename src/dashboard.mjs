@@ -185,6 +185,8 @@ const VOICE_OPTIONS = [
   { label: 'Voxtral Mini (current)', price: '$13 per million characters', model: 'mistralai/voxtral-mini-tts-3-0', voices: ['en_paul_neutral'] },
   { label: 'ElevenLabs Flash v2.5', price: '$40 per million characters', model: 'elevenlabs/eleven-flash-v2.5', voices: ['EXAVITQu4vr4xnSDxMaL', 'JBFqnCBsd6RMkjVDRZzb', 'Sarah', 'George'] },
   { label: 'ElevenLabs v4', price: '$80 per million characters', model: 'elevenlabs/eleven-v4', voices: ['EXAVITQu4vr4xnSDxMaL', 'JBFqnCBsd6RMkjVDRZzb', 'Sarah', 'George'] },
+  { label: 'ElevenLabs v4 Turbo (v4 voices, half price)', price: '$40 per million characters', model: 'elevenlabs/eleven-v4-turbo', voices: ['EXAVITQu4vr4xnSDxMaL', 'Sarah'] },
+  { label: 'Google Gemini 3.8 Flash TTS', price: 'per token; roughly a cent per video', model: 'google/gemini-3.8-flash-tts', voices: ['Kore', 'Aoede', 'Puck'] },
 ];
 const VOICE_NAMES = { EXAVITQu4vr4xnSDxMaL: 'Sarah (by ID)', JBFqnCBsd6RMkjVDRZzb: 'George (by ID)', en_paul_neutral: 'Paul' };
 
