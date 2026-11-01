@@ -11,10 +11,15 @@ export const VIEWPORT = { width: 1280, height: 720 };
 const IDLE_MS = 10 * 60 * 1000;
 
 // Sessions are as sensitive as a password, so they are encrypted with LOGIN_SECRET (or the demo password).
+// New saves use the first secret that is set; unlocking also tries the others, so adding or changing
+// DEMO_PASSWORD later doesn't lock out logins saved under LOGIN_SECRET or API_KEY (they are re-saved
+// under the current secret the first time they are used).
+const secrets = () => [process.env.LOGIN_SECRET, process.env.DEMO_PASSWORD, process.env.API_KEY].filter(Boolean);
+const keyFor = (secret) => crypto.createHash('sha256').update(`docs-to-video-logins:${secret}`).digest();
 function key() {
-  const secret = process.env.LOGIN_SECRET || process.env.DEMO_PASSWORD || process.env.API_KEY;
+  const [secret] = secrets();
   if (!secret) throw new Error('Set LOGIN_SECRET (or DEMO_PASSWORD) on the service before saving logins.');
-  return crypto.createHash('sha256').update(`docs-to-video-logins:${secret}`).digest();
+  return keyFor(secret);
 }
 const encrypt = (obj) => {
   const iv = crypto.randomBytes(12);
@@ -22,10 +27,18 @@ const encrypt = (obj) => {
   const data = Buffer.concat([c.update(JSON.stringify(obj), 'utf8'), c.final()]);
   return { iv: iv.toString('base64'), tag: c.getAuthTag().toString('base64'), data: data.toString('base64') };
 };
-const decrypt = (e) => {
-  const d = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(e.iv, 'base64'));
+const decryptWith = (k, e) => {
+  const d = crypto.createDecipheriv('aes-256-gcm', k, Buffer.from(e.iv, 'base64'));
   d.setAuthTag(Buffer.from(e.tag, 'base64'));
   return JSON.parse(Buffer.concat([d.update(Buffer.from(e.data, 'base64')), d.final()]).toString('utf8'));
+};
+// Returns { value, current } where current is false if an older secret unlocked it.
+const decrypt = (e) => {
+  const all = secrets();
+  for (const [i, s] of all.entries()) {
+    try { return { value: decryptWith(keyFor(s), e), current: i === 0 }; } catch { /* try the next secret */ }
+  }
+  throw new Error('no secret unlocks this login');
 };
 
 export const cleanName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
@@ -39,7 +52,9 @@ export async function loadLogin(db, name) {
   const doc = await db.collection('logins').findOne({ name });
   if (!doc) throw new Error(`Saved login "${name}" was not found. Log in again from the dashboard.`);
   try {
-    return { storageState: decrypt(doc.secret), url: doc.url, name };
+    const { value, current } = decrypt(doc.secret);
+    if (!current) await db.collection('logins').updateOne({ name }, { $set: { secret: encrypt(value) } });
+    return { storageState: value, url: doc.url, name };
   } catch {
     throw new Error(`Saved login "${name}" could not be unlocked (LOGIN_SECRET changed?). Log in again from the dashboard.`);
   }
