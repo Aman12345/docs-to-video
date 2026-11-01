@@ -7,6 +7,8 @@
 import { get } from './settings.mjs';
 export const authorModel = () => get('authorModel');
 export const repairModel = () => get('repairModel') || authorModel();
+// The editor that reviews finished videos: a frontier model by default, since it judges what viewers need.
+export const reviewModel = () => get('reviewModel') || 'anthropic/claude-opus-5.5';
 
 export const newUsage = (model) => ({ calls: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, model });
 

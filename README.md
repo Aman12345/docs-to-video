@@ -174,36 +174,30 @@ holds while the line is spoken, under a green "✓ Result" chip. It isn't counte
 New videos get it while being planned; older videos get it on their next re-record, and it is then saved
 with their steps, so it's only done once. Turn it off on the Settings page ("Check your work" ending).
 
-### Review and approval
+### Review and approval: the AI editor
 
-Viewers (share links, the support agent's search, video links) always get the **approved ("live") version**.
-A new recording is a draft until it's approved, so an unchecked video never replaces a good one.
+Viewers (share links, the support agent's search, video links) always get the **approved ("live") version**;
+a new recording is a draft until it's approved, so an unchecked video never replaces a good one.
 
-1. **AI review** (every finished video, ~1.5¢ with the takeover model): one screenshot per step, the
-   narration and the request go to the AI, which reports problems in a fixed format (step, code, note):
-   narration-mismatch, screen-not-ready, wrong-screen, sensitive-data, ending-wrong. Screenshot text is
-   treated as data, never instructions.
-2. **Automatic fixes, at most 2 rounds**, each re-checked: narration rewritten to match the screen (new
-   voice, no re-record); re-record with longer waits; re-record once for a wrong screen; the ending picked
-   again with the reviewer's note. Sensitive data is never fixed automatically.
-3. **Auto-approval**: a re-record whose review passed and whose screens match the live version (at most
-   0.6% of any step's screen different; `AUTO_APPROVE_MAX_CHANGE_PCT`) goes live without a person.
-4. **People** review everything else on `/ui/review/:slug` (linked from "Needs review" on the dashboard):
-   the new and live videos side by side, before/after screenshots per step, the AI's findings, and
-   **Approve**, **Request changes** (the AI applies the note to narration, titles or typed values, then
-   it's re-recorded and comes back) or **Reject** (the live version stays).
+Every finished video is reviewed by the **AI editor** (Opus by default, `REVIEW_MODEL` / Settings; ~6–7¢ a
+review). It sees the request, each step's actions and narration, and one screenshot per step, and decides:
+- **approve**: a viewer would understand and succeed. With "Who approves videos" set to the AI editor (the
+  default), a confident approval (≥ 0.7) makes it live with no person involved.
+- **fix**: it says what's wrong and how to fix it, and the pipeline applies it and asks again (at most 2
+  rounds): rewrite narration (no re-record), re-record (slower if a screen wasn't ready), redo the ending, or
+  **plan the steps again** from the request plus its change (e.g. "show the approver options before choosing").
+  Re-records never get new steps without a person: the editor's suggestion becomes a question instead.
+- **ask**: only when it's genuinely unsure what the right video is, can't judge from the screenshots, or sees
+  personal data. You get its question on the review page and answer it under "Request changes".
 
-Smarter videos from feedback:
-- Planning shows choices instead of hiding them: for a list of options (approver type, policy rule) it opens
-  the list, pauses so viewers can read it, names the main options and when to use each, then picks one.
-- The AI review also reports **missing-context** (e.g. picked one option as if it were the only one) with a
-  suggested change; the review page has "Use this" to turn it into a change request.
-- **Request changes** edits wording and typed values directly, or, when the request needs different or extra
-  steps, plans the video again from its original request plus the feedback (same video, new version).
-- **Team guidelines**: tick "Also remember this for future videos" and the general version of the request is
-  saved; planning and the AI review follow every guideline. Manage them on the Settings page.
+People review on `/ui/review/:slug` ("Needs review" on the dashboard): new and live videos side by side,
+before/after screenshots per step, the editor's summary, findings and suggested changes ("Use this"), and
+**Approve**, **Request changes** (wording edited directly, or the video re-planned with the feedback) or
+**Reject**. Tick "remember for future videos" to turn feedback into a **team guideline** that planning and the
+editor follow from then on (Settings → Team guidelines). Planning also shows choices instead of hiding them.
 
-Both are switchable on the Settings page (AI review, auto-approval).
+Settings: AI editor model, who approves (AI editor or a person), AI review on/off, and auto-approval of
+unchanged re-records when a person approves (at most 0.6% of any step's screen different).
 
 ### AI takeover when a step stops working
 

@@ -9,7 +9,9 @@ export const SETTINGS = {
   reasoningEffort: { env: 'AI_REASONING_EFFORT', default: 'low' }, // for OpenAI GPT models
   voice: { env: '', default: '' }, // default voice id (src/voices.mjs); empty: TTS_MODEL / TTS_VOICE
   checkStep: { env: 'CHECK_STEP', default: 'on' }, // end each video by showing the result
-  aiReview: { env: 'AI_REVIEW', default: 'on' }, // AI checks each finished video and fixes what it can (up to 2 rounds)
+  aiReview: { env: 'AI_REVIEW', default: 'on' }, // the AI editor reviews each finished video and fixes what it can (up to 2 rounds)
+  reviewModel: { env: 'REVIEW_MODEL', default: 'anthropic/claude-opus-5.5' }, // the editor
+  approvalMode: { env: 'APPROVAL_MODE', default: 'ai' }, // ai: the editor approves when confident, people get questions only; person: people approve new videos
   autoApprove: { env: 'AUTO_APPROVE', default: 'on' }, // re-records whose screens didn't change go live without a person
   recordOn: { env: 'RECORD_ON', default: 'render' }, // render / github / cloudrun: which workers take new jobs (src/runners.mjs)
 };

@@ -1,6 +1,6 @@
 // A small web page for the demo: pick a storyboard, click "Make video", watch the job,
 // play and approve the result. Protected with a password when DEMO_PASSWORD is set.
-import { authorModel, repairModel, chat, parseJson, newUsage } from './ai.mjs';
+import { authorModel, repairModel, reviewModel, chat, parseJson, newUsage } from './ai.mjs';
 import { SETTINGS, setting, saveSettings, poolForNewJob, guidelines, addGuideline, removeGuideline } from './settings.mjs';
 import { RUNNERS, kickRunners, githubReady } from './runners.mjs';
 import crypto from 'node:crypto';
@@ -73,9 +73,10 @@ const userOf = (req) => { const h = req.headers.authorization || ''; return h.st
 const needsReview = (v) => v.status === 'draft' && (!v.live || v.live.version < v.version);
 function reviewSummary(v) {
   const r = v.review;
-  if (!r || r.state === 'skipped') return 'AI review didn\'t run; please watch it.';
-  if (r.state === 'failed') return `AI review found ${r.findings.length} problem${r.findings.length > 1 ? 's' : ''} it couldn't fix.`;
-  return r.changed ? `AI review passed; ${r.changed}.` : 'AI review passed.';
+  if (!r || r.state === 'skipped') return 'The AI editor didn\'t review this one; please watch it.';
+  if (r.state === 'question') return `The AI editor asks: ${r.question}`;
+  if (r.state === 'failed' || r.state === 'passed' && r.findings?.length) return `The AI editor couldn't fix ${r.findings.length} problem${r.findings.length > 1 ? 's' : ''} in 2 rounds.`;
+  return `The AI editor approved it${r.changed ? `, but ${r.changed}` : ''}; it's waiting for a person.`;
 }
 function reviewPills(v) {
   const pill = (t, c) => `<span class="pill" style="background:${c[0]};color:${c[1]}">${t}</span>`;
@@ -88,10 +89,10 @@ function reviewPills(v) {
   return out.join(' ');
 }
 function reviewLine(v) {
-  if (v.live?.approvedBy === 'auto' && v.live.version === v.version) return `<div class="meta" style="margin-top:6px;color:#067647">✓ Approved automatically: ${esc(v.live.reason || 'nothing changed')}</div>`;
+  if (['auto', 'ai'].includes(v.live?.approvedBy) && v.live.version === v.version) return `<div class="meta" style="margin-top:6px;color:#067647">✓ ${v.live.approvedBy === 'ai' ? 'Approved by the AI editor' : 'Approved automatically'}: ${esc(v.live.reason?.replace(/^Approved by the AI editor \([^)]*\): /, '') || 'nothing changed')}</div>`;
   if (!v.review || !needsReview(v)) return '';
   const r = v.review;
-  return `<div class="meta" style="margin-top:6px;color:${r.state === 'failed' ? '#b42318' : '#344054'}">${r.state === 'failed' ? '⚠' : r.state === 'passed' ? '✓' : '•'} ${esc(reviewSummary(v))}</div>`;
+  return `<div class="meta" style="margin-top:6px;color:${r.state === 'question' ? '#5925dc' : r.state === 'failed' ? '#b42318' : '#344054'}">${r.state === 'question' ? '?' : r.state === 'failed' ? '⚠' : '•'} ${esc(reviewSummary(v))}</div>`;
 }
 function reviewPage(v, { msg } = {}) {
   const r = v.review || { state: 'skipped', findings: [], fixes: [] };
@@ -105,9 +106,10 @@ function reviewPage(v, { msg } = {}) {
       <div class="shots"><figure><img loading="lazy" src="/ui/review/${esc(v.slug)}/steps/${i + 1}?v=${v.version}" alt=""><figcaption>New (v${v.version})</figcaption></figure>
       ${v.live?.files?.steps?.[i] ? `<figure><img loading="lazy" src="/videos/${esc(v.slug)}/steps/${i + 1}?v=${v.live.version}" alt=""><figcaption>Live (v${v.live.version})</figcaption></figure>` : ''}</div></section>`;
   };
-  const verdict = r.state === 'passed' ? ['#ecfdf3', '#067647', `✓ AI review passed${r.changed ? `, but ${r.changed}` : ''}`]
-    : r.state === 'failed' ? ['#fef3f2', '#b42318', `⚠ AI review found ${r.findings.length} problem${r.findings.length > 1 ? 's' : ''} it couldn't fix`]
-      : ['#f2f4f7', '#344054', 'AI review didn\'t run on this version'];
+  const verdict = r.state === 'question' ? ['#f4f3ff', '#5925dc', '? The AI editor has a question for you']
+    : r.state === 'failed' || (r.state === 'passed' && r.findings?.length) ? ['#fef3f2', '#b42318', `⚠ The AI editor couldn't fix ${r.findings.length} problem${r.findings.length > 1 ? 's' : ''} in 2 rounds`]
+      : ['approved', 'passed'].includes(r.state) ? ['#ecfdf3', '#067647', `✓ The AI editor approved it${r.changed ? `, but ${r.changed}` : ''}`]
+        : ['#f2f4f7', '#344054', 'The AI editor didn\'t review this version'];
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Review: ${esc(v.title)}</title>
 <style>*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,sans-serif;background:#f7f8fa;color:#1d2433}main{max-width:1100px;margin:0 auto;padding:24px 16px 60px}h1{font-size:22px;margin:4px 0}
 .card{background:#fff;border:1px solid #e4e7ec;border-radius:12px;padding:16px 18px;margin-bottom:16px}.meta{color:#667085;font-size:13px}a{color:#3b5bdb}
@@ -122,8 +124,10 @@ button{font:inherit;font-weight:600;border-radius:8px;padding:9px 16px;cursor:po
 <div class="meta">Draft v${v.version}${v.live ? ` · live is v${v.live.version} (approved ${v.live.approvedBy === 'auto' ? 'automatically' : `by ${esc(v.live.approvedBy || 'someone')}`})` : ' · new video, nothing live yet'}</div>
 ${msg ? `<div class="ok" style="margin-top:12px">${esc(msg)}</div>` : ''}
 <section class="card" style="margin-top:14px"><div class="verdict" style="background:${verdict[0]};color:${verdict[1]}">${verdict[2]}</div>
+${r.question ? `<p style="font-size:16px;margin:4px 0 10px"><strong>${esc(r.question)}</strong></p><p class="meta">Answer it under "Request changes" below (or approve as it is).</p>` : ''}
+${r.summary ? `<p class="meta">Editor's summary${r.model ? ` (${esc(r.model)})` : ''}: ${esc(r.summary)}</p>` : ''}
 ${r.fixes?.length ? `<p class="meta">Fixed automatically before you saw it: ${esc(r.fixes.join(' '))}</p>` : ''}
-${(r.findings || []).length ? `<ul>${r.findings.map((x) => `<li>Step ${x.step}: <strong>${esc(REVIEW_CODES[x.code] || x.code)}</strong>: ${esc(x.note)}${x.suggestion ? `<br><span class="meta">Suggested change: "${esc(x.suggestion)}"</span> <button type="button" class="use" data-s="${esc(x.suggestion)}">Use this</button>` : ''}</li>`).join('')}</ul>` : ''}
+${(r.findings || []).length ? `<ul>${r.findings.map((x) => `<li>Step ${x.step}: <strong>${esc(REVIEW_CODES[x.code] || x.code)}</strong>: ${esc(x.note)}${(x.request || x.suggestion) ? `<br><span class="meta">Suggested change: "${esc(x.request || x.suggestion)}"</span> <button type="button" class="use" data-s="${esc(x.request || x.suggestion)}">Use this</button>` : ''}</li>`).join('')}</ul>` : ''}
 ${v.reviewNote ? `<p class="meta">Last change request: "${esc(v.reviewNote.note)}" → ${esc(v.reviewNote.summary || '')}</p>` : ''}</section>
 <section class="card"><div class="vids"><div><strong>New (v${v.version})</strong><video controls preload="metadata" src="/ui/review/${esc(v.slug)}/video?v=${v.version}"></video></div>
 ${v.live ? `<div><strong>Live now (v${v.live.version})</strong><video controls preload="metadata" src="/videos/${esc(v.slug)}/video?v=${v.live.version}"></video></div>` : ''}</div></section>
@@ -239,6 +243,9 @@ ${msg ? `<div class="ok">${esc(msg)}</div>` : ''}${err ? `<div class="err">${esc
 <label for="repairModel">Takeover model</label>
 <input id="repairModel" name="repairModel" list="models" value="${esc(val('repairModel'))}" placeholder="same as planning (${esc(plan)})" autocomplete="off" spellcheck="false">
 <span class="price">Fixes a step that stopped working while recording; it looks at screenshots. ${note('repairModel', take)} · ${esc(price(byId.get(take)))}</span>
+<label for="reviewModel">AI editor (reviews every finished video)</label>
+<input id="reviewModel" name="reviewModel" list="models" value="${esc(val('reviewModel'))}" placeholder="${esc(cur.reviewModel.value)}" autocomplete="off" spellcheck="false">
+<span class="price">Decides whether each video is ready, fixes what it can and only asks you when it's genuinely unsure. A frontier model works best here; it must read screenshots. ${note('reviewModel')} · ${esc(price(byId.get(cur.reviewModel.value)))}</span>
 <datalist id="models">${models.map((m) => `<option value="${esc(m.id)}">${esc(m.name)} · ${esc(price(m))}</option>`).join('')}</datalist>
 <p class="meta" style="margin:12px 0 0">Type to search ${models.length || 'OpenRouter\'s'} models, e.g. <code>gpt-6.1-terra</code> or <code>claude</code>. <a href="/ui/ai-check" target="_blank">Test the models in use</a> (asks each one a small question).</p>
 </section>
@@ -247,8 +254,10 @@ ${msg ? `<div class="ok">${esc(msg)}</div>` : ''}${err ? `<div class="err">${esc
 <span class="price">${note('repair')}</span></div>
 <div><label>Tries per broken step</label><input name="repairMaxTurns" type="number" min="1" max="8" value="${esc(val('repairMaxTurns'))}" placeholder="${esc(cur.repairMaxTurns.value)}"><span class="price">${note('repairMaxTurns')}</span></div></div>
 <label>AI review of every finished video</label>${sel('aiReview', [['', `Render / default (${cur.aiReview.from === 'settings' ? 'on' : cur.aiReview.value})`], ['on', 'On: check each video and fix what it can (up to 2 rounds)'], ['off', 'Off']], val('aiReview'))}
-<span class="price">Looks at one screenshot per step against the narration: wrong screen, loading screens, visible personal data, an ending that doesn't show the result. About 1.5¢ per video with the takeover model. ${note('aiReview')}</span>
-<label>Approve unchanged re-records automatically</label>${sel('autoApprove', [['', `Render / default (${cur.autoApprove.from === 'settings' ? 'on' : cur.autoApprove.value})`], ['on', 'On: if the AI review passes and every step looks the same as the live version'], ['off', 'Off: a person approves every new version']], val('autoApprove'))}
+<span class="price">Looks at one screenshot per step against the narration: wrong screen, loading screens, visible personal data, an ending that doesn't show the result. About 6–7¢ per video with Opus as the editor. ${note('aiReview')}</span>
+<label>Who approves videos</label>${sel('approvalMode', [['', `Render / default (${cur.approvalMode.from === 'settings' ? 'AI editor' : cur.approvalMode.value === 'person' ? 'a person' : 'AI editor'})`], ['ai', 'The AI editor, when it\'s confident; you only get its questions'], ['person', 'A person approves every new video']], val('approvalMode'))}
+<span class="price">Visible personal data and anything the editor can't resolve in 2 rounds always come to you. ${note('approvalMode')}</span>
+<label>Approve unchanged re-records automatically (when a person approves)</label>${sel('autoApprove', [['', `Render / default (${cur.autoApprove.from === 'settings' ? 'on' : cur.autoApprove.value})`], ['on', 'On: if the AI review passes and every step looks the same as the live version'], ['off', 'Off: a person approves every new version']], val('autoApprove'))}
 <span class="price">New videos and changed screens always wait for a person on the review page. ${note('autoApprove')}</span>
 <label>"Check your work" ending</label>${sel('checkStep', [['', `Render / default (${cur.checkStep.from === 'settings' ? 'on' : cur.checkStep.value})`], ['on', 'End each video by showing the result'], ['off', 'No ending step']], val('checkStep'))}
 <span class="price">The AI picks the finished result, clears anything covering it, highlights it and writes one line about it. Added once per video, then saved with its steps. ${note('checkStep')}</span>
@@ -604,7 +613,7 @@ export async function handleDashboard(db, req, res, url) {
     if (req.method === 'POST') {
       const form = await readForm(req);
       const known = new Set(models.map((m) => m.id));
-      for (const k of ['authorModel', 'repairModel']) {
+      for (const k of ['authorModel', 'repairModel', 'reviewModel']) {
         const v = (form[k] || '').trim();
         if (v && known.size && !known.has(v)) {
           res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' }).end(settingsPage(models, { err: `"${v}" isn't an OpenRouter model id. Pick one from the list (e.g. openai/gpt-6.1-terra).` }));
@@ -624,7 +633,7 @@ export async function handleDashboard(db, req, res, url) {
   if (req.method === 'GET' && p === '/ui/ai-check') {
     // Health check: gives each AI model a made-up broken step and checks it answers sensibly.
     const rows = [];
-    for (const [what, role, model] of [['Planning', 'Plans each new video from your description.', authorModel()], ['Takeover', 'Fixes steps that stop working and adds the "Check your work" ending.', repairModel()]]) {
+    for (const [what, role, model] of [['Planning', 'Plans each new video from your description.', authorModel()], ['Takeover', 'Fixes steps that stop working and adds the "Check your work" ending.', repairModel()], ['Editor', 'Reviews every finished video, fixes it or asks you.', reviewModel()]]) {
       const usage = newUsage(model), t = Date.now();
       try {
         const reply = parseJson(await chat([
