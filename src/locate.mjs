@@ -30,6 +30,7 @@ export async function performPageStep(page, step, { waitSlack = 1 } = {}) {
   if (step.do === 'pause') { await page.waitForTimeout(step.ms || 1000); return true; }
   // Wait for slow work in the app (e.g. Miter AI building a report) until some text shows it's finished.
   if (step.do === 'wait') {
+    if (!step.text && step.target?.text) step = { ...step, text: step.target.text }; // older plans kept the text here
     const ms = Math.min((Number(step.seconds) || 120) * waitSlack, 900) * 1000;
     // Only visible matches count (a hidden copy of the text elsewhere must not block the wait).
     if (step.text) await page.getByText(step.text, { exact: false }).filter({ visible: true }).first().waitFor({ state: 'visible', timeout: ms });
