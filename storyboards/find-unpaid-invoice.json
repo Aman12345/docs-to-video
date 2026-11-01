@@ -1,0 +1,32 @@
+{
+  "id": "find-unpaid-invoice",
+  "title": "Find a customer's unpaid invoice",
+  "description": "Shows how to open your invoices and search for a customer to check whether their invoice is still due.",
+  "answersQuestions": [
+    "How do I check if a customer has paid?",
+    "Where can I see unpaid invoices?",
+    "How do I search for an invoice?"
+  ],
+  "tags": { "area": "billing", "role": "admin", "platform": "web" },
+  "startUrl": "/#/dashboard",
+  "scenes": [
+    {
+      "chapter": "Open your invoices",
+      "narration": "Open Billing from the menu, then select the Invoices tab.",
+      "steps": [
+        { "do": "click", "target": { "role": "link", "name": "Billing" }, "zoom": true },
+        { "do": "click", "target": { "role": "tab", "name": "Invoices" }, "zoom": true },
+        { "do": "expect", "target": { "testId": "invoice-table" } }
+      ]
+    },
+    {
+      "chapter": "Search for the customer",
+      "narration": "Type the customer's name in the search box. Invoices marked Due have not been paid yet.",
+      "steps": [
+        { "do": "fill", "target": { "testId": "invoice-search" }, "value": "Quarry", "zoom": true },
+        { "do": "expect", "target": { "text": "INV-1038" } },
+        { "do": "pause", "ms": 1200 }
+      ]
+    }
+  ]
+}

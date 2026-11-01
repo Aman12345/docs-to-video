@@ -1,0 +1,50 @@
+{
+  "id": "export-invoices-csv",
+  "title": "Export your invoices to CSV",
+  "description": "Shows how to open Billing, find the Invoices tab, filter the list and download an export of your invoices as a CSV file.",
+  "answersQuestions": [
+    "How do I export invoices?",
+    "Can I download my invoices as a spreadsheet?",
+    "Where is the invoice CSV export?"
+  ],
+  "tags": { "area": "billing", "role": "admin", "platform": "web" },
+  "guide": "guides/billing/export.md#export-to-csv",
+  "startUrl": "/#/dashboard",
+  "scenes": [
+    {
+      "chapter": "Open Billing",
+      "narration": "From your dashboard, open Billing in the left-hand menu.",
+      "steps": [
+        { "do": "click", "target": { "role": "link", "name": "Billing" }, "zoom": true },
+        { "do": "expect", "target": { "role": "heading", "name": "Billing" } }
+      ]
+    },
+    {
+      "chapter": "Go to Invoices",
+      "narration": "Select the Invoices tab to see every invoice you have sent.",
+      "steps": [
+        { "do": "click", "target": { "role": "tab", "name": "Invoices" }, "zoom": true },
+        { "do": "expect", "target": { "testId": "invoice-table" } }
+      ]
+    },
+    {
+      "chapter": "Filter the list",
+      "narration": "Optionally, search for a customer to narrow the list before exporting.",
+      "steps": [
+        { "do": "fill", "target": { "testId": "invoice-search" }, "value": "Harbor", "zoom": true },
+        { "do": "pause", "ms": 800 },
+        { "do": "fill", "target": { "testId": "invoice-search" }, "value": "" }
+      ]
+    },
+    {
+      "chapter": "Export as CSV",
+      "narration": "Click Export, choose a date range, keep CSV selected, then click Download export.",
+      "steps": [
+        { "do": "click", "target": { "testId": "export-button" }, "zoom": true },
+        { "do": "select", "target": { "label": "Date range" }, "value": "This quarter" },
+        { "do": "click", "target": { "role": "button", "name": "Download export" }, "zoom": true },
+        { "do": "expect", "target": { "text": "Export ready" } }
+      ]
+    }
+  ]
+}

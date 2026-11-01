@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ledgerly (demo app)</title>
+<style>
+  :root { --ink:#1d2433; --muted:#667085; --line:#e4e7ec; --brand:#3b5bdb; --bg:#f7f8fa; }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color:var(--ink); background:var(--bg); }
+  .shell { display:grid; grid-template-columns: 220px 1fr; min-height:100vh; }
+  nav { background:#fff; border-right:1px solid var(--line); padding:20px 14px; }
+  .logo { font-weight:700; font-size:18px; margin:0 8px 22px; }
+  .logo span { color:var(--brand); }
+  nav a { display:block; padding:9px 12px; border-radius:8px; color:var(--ink); text-decoration:none; margin-bottom:2px; }
+  nav a.active { background:#eef2ff; color:var(--brand); font-weight:600; }
+  main { padding:28px 36px; }
+  h1 { font-size:24px; margin:0 0 6px; }
+  .sub { color:var(--muted); margin:0 0 22px; }
+  .cards { display:grid; grid-template-columns: repeat(3, 1fr); gap:16px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:18px; }
+  .card .k { color:var(--muted); font-size:13px; } .card .v { font-size:26px; font-weight:700; margin-top:6px; }
+  .tabs { display:flex; gap:6px; border-bottom:1px solid var(--line); margin-bottom:18px; }
+  .tabs button { border:0; background:none; padding:10px 14px; font:inherit; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; }
+  .tabs button[aria-selected="true"] { color:var(--brand); border-bottom-color:var(--brand); font-weight:600; }
+  .toolbar { display:flex; gap:10px; align-items:center; margin-bottom:14px; }
+  input[type=search], select { font:inherit; padding:8px 12px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  input[type=search] { width:280px; }
+  .spacer { flex:1; }
+  .btn { font:inherit; padding:9px 16px; border-radius:8px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+  .btn.primary { background:var(--brand); color:#fff; border-color:var(--brand); font-weight:600; }
+  table { width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  th, td { text-align:left; padding:11px 14px; border-bottom:1px solid var(--line); }
+  th { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); background:#fafbfc; }
+  .pill { font-size:12px; padding:2px 8px; border-radius:99px; background:#ecfdf3; color:#067647; }
+  .pill.due { background:#fffaeb; color:#b54708; }
+  .backdrop { position:fixed; inset:0; background:rgba(16,24,40,.45); display:none; align-items:center; justify-content:center; }
+  .backdrop.open { display:flex; }
+  .modal { background:#fff; border-radius:14px; width:440px; padding:22px; box-shadow:0 20px 50px rgba(0,0,0,.2); }
+  .modal h2 { margin:0 0 4px; font-size:19px; } .modal p { color:var(--muted); margin:0 0 16px; }
+  .field { margin-bottom:14px; } .field label { display:block; font-weight:600; margin-bottom:6px; }
+  .radios label { display:flex; gap:8px; align-items:center; font-weight:400; margin-bottom:6px; }
+  .actions { display:flex; justify-content:flex-end; gap:10px; margin-top:8px; }
+  .toast { position:fixed; right:24px; bottom:24px; background:#101828; color:#fff; padding:12px 16px; border-radius:10px; display:none; }
+  .toast.show { display:block; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <nav aria-label="Main">
+    <div class="logo">Ledger<span>ly</span></div>
+    <a href="#/dashboard" data-route="dashboard">Dashboard</a>
+    <a href="#/billing" data-route="billing">Billing</a>
+    <a href="#/customers" data-route="customers">Customers</a>
+    <a href="#/settings" data-route="settings">Settings</a>
+  </nav>
+  <main id="view"></main>
+</div>
+
+<div class="backdrop" id="exportModal" role="dialog" aria-modal="true" aria-labelledby="exportTitle">
+  <div class="modal">
+    <h2 id="exportTitle">Export invoices</h2>
+    <p>Download the invoices that match your current filters.</p>
+    <div class="field">
+      <label for="range">Date range</label>
+      <select id="range" data-testid="export-range">
+        <option>Last 30 days</option><option>This quarter</option><option>This year</option>
+      </select>
+    </div>
+    <div class="field radios">
+      <label style="font-weight:600">Format</label>
+      <label><input type="radio" name="fmt" value="csv" checked> CSV (spreadsheet)</label>
+      <label><input type="radio" name="fmt" value="pdf"> PDF (one file per invoice)</label>
+    </div>
+    <div class="actions">
+      <button class="btn" id="cancelExport">Cancel</button>
+      <button class="btn primary" id="confirmExport">Download export</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+  const invoices = [
+    ['INV-1042','Brightside Dental','$1,240.00','Paid','Oct 28'],
+    ['INV-1041','Harbor Coffee Co.','$318.50','Due','Oct 27'],
+    ['INV-1040','Northfield Gym','$2,975.00','Paid','Oct 24'],
+    ['INV-1039','Maple & Pine Studio','$640.00','Paid','Oct 21'],
+    ['INV-1038','Quarry Logistics','$4,410.00','Due','Oct 19'],
+    ['INV-1037','Juniper Clinic','$905.25','Paid','Oct 15'],
+  ];
+  const view = document.getElementById('view');
+  function render() {
+    const route = (location.hash.replace('#/','') || 'dashboard');
+    document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.route === route));
+    if (route === 'billing') {
+      view.innerHTML = `
+        <h1>Billing</h1><p class="sub">Invoices, payments and plans for your workspace.</p>
+        <div class="tabs" role="tablist">
+          <button role="tab" aria-selected="false" data-tab="overview">Overview</button>
+          <button role="tab" aria-selected="false" data-tab="invoices">Invoices</button>
+          <button role="tab" aria-selected="false" data-tab="payments">Payments</button>
+        </div>
+        <div id="tabBody"><p class="sub">Choose a tab to get started.</p></div>`;
+      view.querySelectorAll('[role=tab]').forEach(t => t.onclick = () => showTab(t.dataset.tab));
+    } else if (route === 'dashboard') {
+      view.innerHTML = `
+        <h1>Good morning, Sam</h1><p class="sub">Here's how your business is doing this month.</p>
+        <div class="cards">
+          <div class="card"><div class="k">Revenue</div><div class="v">$48,210</div></div>
+          <div class="card"><div class="k">Outstanding</div><div class="v">$4,728</div></div>
+          <div class="card"><div class="k">Invoices sent</div><div class="v">37</div></div>
+        </div>`;
+    } else {
+      view.innerHTML = `<h1>${route[0].toUpperCase()+route.slice(1)}</h1><p class="sub">Nothing here in the demo.</p>`;
+    }
+  }
+  function showTab(name) {
+    document.querySelectorAll('[role=tab]').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
+    const body = document.getElementById('tabBody');
+    if (name !== 'invoices') { body.innerHTML = '<p class="sub">Nothing here in the demo.</p>'; return; }
+    body.innerHTML = `
+      <div class="toolbar">
+        <input type="search" placeholder="Search invoices" aria-label="Search invoices" data-testid="invoice-search">
+        <span class="spacer"></span>
+        <button class="btn primary" data-testid="export-button">Export</button>
+      </div>
+      <table data-testid="invoice-table"><thead><tr><th>Invoice</th><th>Customer</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead>
+      <tbody>${invoices.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td><span class="pill ${r[3]==='Due'?'due':''}">${r[3]}</span></td><td>${r[4]}</td></tr>`).join('')}</tbody></table>`;
+    const search = body.querySelector('[data-testid=invoice-search]');
+    search.oninput = () => body.querySelectorAll('tbody tr').forEach(tr =>
+      tr.style.display = tr.textContent.toLowerCase().includes(search.value.toLowerCase()) ? '' : 'none');
+    body.querySelector('[data-testid=export-button]').onclick = () => document.getElementById('exportModal').classList.add('open');
+  }
+  document.getElementById('cancelExport').onclick = () => document.getElementById('exportModal').classList.remove('open');
+  document.getElementById('confirmExport').onclick = () => {
+    document.getElementById('exportModal').classList.remove('open');
+    const t = document.getElementById('toast');
+    t.textContent = 'Export ready: invoices-last-30-days.csv'; t.classList.add('show');
+  };
+  window.addEventListener('hashchange', render); render();
+</script>
+</body>
+</html>

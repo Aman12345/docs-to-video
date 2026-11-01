@@ -1,0 +1,36 @@
+# Render Blueprint: Dashboard > New > Blueprint, pick this repo, then fill in the secret values.
+services:
+  - type: web
+    name: video-api
+    runtime: docker
+    plan: standard            # 1 CPU, 2 GB: mostly waits on MongoDB and the network
+    dockerfilePath: ./Dockerfile
+    dockerCommand: node src/api.mjs
+    healthCheckPath: /health
+    envVars:
+      - fromGroup: docs-to-video
+
+  - type: worker
+    name: video-worker
+    runtime: docker
+    plan: pro                 # 2 CPU, 4 GB: headless Chrome + ffmpeg need the room
+    dockerfilePath: ./Dockerfile
+    dockerCommand: node src/worker.mjs
+    envVars:
+      - fromGroup: docs-to-video
+
+envVarGroups:
+  - name: docs-to-video
+    envVars:
+      - key: MONGODB_URI          # Atlas connection string (allow Render's outbound IPs in Atlas)
+        sync: false
+      - key: MONGODB_DB
+        value: docs_to_video
+      - key: APP_URL              # the resettable copy of your app; leave empty to use the demo app
+        sync: false
+      - key: PUBLIC_URL           # e.g. https://video-api.onrender.com, used in share links
+        sync: false
+      - key: OPENROUTER_API_KEY   # enables narration (and, later, the Claude authoring agent)
+        sync: false
+      - key: API_KEY              # shared secret for Slack bot / support agent calls
+        generateValue: true
