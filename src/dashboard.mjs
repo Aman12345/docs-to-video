@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ObjectId } from 'mongodb';
+import { narrationOn } from './compose.mjs';
 
 const SB_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'storyboards');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -148,6 +149,20 @@ export async function handleDashboard(db, req, res, url) {
   if (req.method === 'GET' && p.startsWith('/ui/jobs/') && p.endsWith('/storyboard')) {
     const job = await db.collection('jobs').findOne({ _id: new ObjectId(p.split('/')[3]) });
     res.writeHead(job?.storyboard ? 200 : 404, { 'Content-Type': 'application/json' }).end(JSON.stringify(job?.storyboard || { error: 'not found' }, null, 2));
+    return true;
+  }
+  if (req.method === 'GET' && p === '/ui/voice-check') {
+    // Speaks one short sentence with the configured voice, to confirm narration works without making a video.
+    const res2 = narrationOn()
+      ? await fetch('https://openrouter.ai/api/v1/audio/speech', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: process.env.TTS_MODEL || 'mistralai/voxtral-mini-tts-3-0', input: 'This is the voice for your how-to videos.', voice: process.env.TTS_VOICE || 'en_paul_neutral', response_format: 'mp3' }),
+      }).catch((e) => ({ ok: false, status: 0, text: async () => e.message }))
+      : null;
+    if (!res2) res.writeHead(200, { 'Content-Type': 'text/plain' }).end('Narration is off. Set NARRATION=on (and OPENROUTER_API_KEY) on the service.');
+    else if (!res2.ok) res.writeHead(502, { 'Content-Type': 'text/plain' }).end(`Text-to-speech failed (${res2.status}): ${(await res2.text()).slice(0, 300)}`);
+    else res.writeHead(200, { 'Content-Type': 'audio/mpeg' }).end(Buffer.from(await res2.arrayBuffer()));
     return true;
   }
   if (req.method === 'POST' && p.startsWith('/ui/approve/')) {
