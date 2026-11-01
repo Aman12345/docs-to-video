@@ -575,7 +575,12 @@ ${rows.map(card).join('')}</main></body></html>`);
   if (req.method === 'POST' && (p.startsWith('/ui/rerecord/') || p === '/ui/rerecord-all')) {
     const form = await readForm(req);
     const n = await queueRerecords(db, p === '/ui/rerecord-all' ? {} : { slug: decodeURIComponent(p.split('/')[3]) }, 'dashboard', pickVoice(form).voice);
-    if (!n) return redirect(res, `/?error=${encodeURIComponent('Nothing to re-record: older videos made before steps were saved need to be made again once.')}`);
+    if (!n) {
+      const slug = p === '/ui/rerecord-all' ? null : decodeURIComponent(p.split('/')[3]);
+      const busy = await db.collection('jobs').countDocuments({ status: { $in: ['queued', 'running'] }, rerecordOf: slug ? slug : { $exists: true } });
+      return redirect(res, `/?error=${encodeURIComponent(busy ? (slug ? 'That video is already being re-recorded; see Jobs below.' : 'Those videos are already being re-recorded; see Jobs below.')
+        : 'Nothing to re-record: older videos made before steps were saved need to be made again once.')}`);
+    }
     return redirect(res);
   }
   if (req.method === 'POST' && p.startsWith('/ui/approve/')) {
