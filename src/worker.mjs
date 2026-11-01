@@ -9,6 +9,8 @@ import { loadLogin } from './logins.mjs';
 
 const POLL_MS = 3000;
 const STALE_MS = 30 * 60 * 1000; // a job "running" this long belonged to a worker that died
+const HEARTBEAT_MS = 15 * 1000;
+const HEARTBEAT_STALE_MS = 2 * 60 * 1000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // What each video cost, so the dashboard shows real numbers, not estimates.
@@ -37,9 +39,16 @@ export async function startWorker() {
   const state = { stopping: false, current: null };
   const loop = (async () => {
     while (!state.stopping) {
+      // Jobs whose worker stopped checking in (server restarted or crashed) go back to the queue.
+      // A running job checks in every 15 s; jobs from before check-ins existed use startedAt.
+      const now = Date.now();
       await jobs.updateMany(
-        { status: 'running', startedAt: { $lt: new Date(Date.now() - STALE_MS) } },
-        { $set: { status: 'queued' } },
+        { status: 'running', $or: [
+          { heartbeatAt: { $lt: new Date(now - HEARTBEAT_STALE_MS) } },
+          { heartbeatAt: { $exists: false }, startedAt: { $lt: new Date(now - 5 * 60 * 1000) } },
+          { startedAt: { $lt: new Date(now - STALE_MS) }, heartbeatAt: { $exists: false } },
+        ] },
+        { $set: { status: 'queued', stage: null, note: 'restarted after the server stopped' }, $inc: { attempts: -1 }, $unset: { heartbeatAt: '' } },
       );
       // Atomically claim the oldest queued job, so two workers never take the same one.
       const job = await jobs.findOneAndUpdate(
@@ -50,6 +59,8 @@ export async function startWorker() {
       if (!job) { await sleep(POLL_MS); continue; }
 
       state.current = job._id;
+      const beat = setInterval(() => jobs.updateOne({ _id: job._id, status: 'running' }, { $set: { heartbeatAt: new Date() } }).catch(() => {}), HEARTBEAT_MS);
+      await jobs.updateOne({ _id: job._id }, { $set: { heartbeatAt: new Date() } });
       const log = (msg) => console.log(`[job ${job._id}] ${msg}`);
       const jobStart = Date.now();
       log(`started: ${job.storyboard?.title || job.prompt}`);
@@ -100,6 +111,8 @@ export async function startWorker() {
         if (!retry && job.rerecordOf) {
           await db.collection('videos').updateOne({ slug: job.rerecordOf }, { $set: { needsAttention: err.message.split('\n')[0].slice(0, 300), needsAttentionAt: new Date() } });
         }
+      } finally {
+        clearInterval(beat);
       }
     }
     demo?.server.close();
