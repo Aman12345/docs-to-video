@@ -3,16 +3,7 @@
 // Videos are framed as "How to … in Miter" unless the title already names the product or another site.
 
 const lowerFirst = (s) => (/^[A-Z][a-z]/.test(s) ? s[0].toLowerCase() + s.slice(1) : s);
-// "Create a Reimbursement" -> "create a reimbursement" (Title Case to sentence case), keeping acronyms
-// (CSV, AI) and the product name as they are.
-function sentenceCase(t) {
-  const words = t.split(' ');
-  const titled = words.filter((w) => /^[A-Z][a-z]/.test(w)).length >= Math.max(2, Math.ceil(words.length * 0.5));
-  if (!titled) return t;
-  const keep = new RegExp(`^(${process.env.BRAND_NAME || 'Miter'}|AI|[A-Z0-9]{2,}.*)$`);
-  return words.map((w, i) => (i > 0 && /^[A-Z][a-z]/.test(w) && !keep.test(w) ? w.toLowerCase() : w)).join(' ');
-}
-const task = (title) => lowerFirst(sentenceCase(String(title || 'do this').replace(/^how to\s+/i, '').replace(/[.!?]+$/, '')));
+const task = (title) => lowerFirst(String(title || 'do this').replace(/^how to\s+/i, '').replace(/[.!?]+$/, ''));
 const list = (xs) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
 const productName = (brand) => brand?.name || process.env.BRAND_NAME || 'Miter';
 
