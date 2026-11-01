@@ -80,7 +80,7 @@ a.btn{display:inline-block;padding:7px 14px;border-radius:8px;border:1px solid v
 .err{background:#fef3f2;border:1px solid #fecdca;color:#b42318;padding:10px 14px;border-radius:8px;margin-bottom:14px}
 .empty{color:var(--muted)}
 </style></head><body><main>
-<h1>Docs to Video</h1><p class="sub">Describe a how-to video, or pick a ready-made storyboard. Claude plans the steps, Playwright records them in headless Chrome on Render, and videos are stored in MongoDB.</p>
+<h1>Docs to Video</h1><p class="sub">Describe a how-to video, or pick a ready-made storyboard. Claude plans the steps, Playwright records them in headless Chrome on Render, and videos are stored in MongoDB. <a href="/ui/voices">Compare voices</a></p>
 ${error ? `<div class="err">${esc(error)}</div>` : ''}
 <div class="card" style="margin-bottom:16px"><form method="post" action="/ui/prompt">
 <label for="prompt"><strong>Describe the video</strong></label>
@@ -175,6 +175,42 @@ function sendText(enter) { const t = document.getElementById('text'); act({ type
 img.addEventListener('click', (e) => { const b = img.getBoundingClientRect(); act({ type: 'click', x: Math.round((e.clientX - b.left) * ${VIEWPORT.width} / b.width), y: Math.round((e.clientY - b.top) * ${VIEWPORT.height} / b.height) }); });
 img.addEventListener('wheel', (e) => { e.preventDefault(); act({ type: 'scroll', dy: Math.sign(e.deltaY) * 300 }); }, { passive: false });
 setInterval(refresh, 700); refresh();
+</script></body></html>`;
+}
+
+const SAMPLE_TEXT = "Here's how to create a reimbursement in Miter. In Spend, open Reimbursements, then select Create. Enter 42.50 as the amount, and choose the job so the expense is costed correctly.";
+const sampleCache = new Map();
+// Voices to compare. ElevenLabs voices are tried by ID and by name, since OpenRouter doesn't list which it accepts.
+const VOICE_OPTIONS = [
+  { label: 'Voxtral Mini (current)', price: '$13 per million characters', model: 'mistralai/voxtral-mini-tts-3-0', voices: ['en_paul_neutral'] },
+  { label: 'ElevenLabs Flash v2.5', price: '$40 per million characters', model: 'elevenlabs/eleven-flash-v2.5', voices: ['EXAVITQu4vr4xnSDxMaL', 'JBFqnCBsd6RMkjVDRZzb', 'Sarah', 'George'] },
+  { label: 'ElevenLabs v4', price: '$80 per million characters', model: 'elevenlabs/eleven-v4', voices: ['EXAVITQu4vr4xnSDxMaL', 'JBFqnCBsd6RMkjVDRZzb', 'Sarah', 'George'] },
+];
+const VOICE_NAMES = { EXAVITQu4vr4xnSDxMaL: 'Sarah (by ID)', JBFqnCBsd6RMkjVDRZzb: 'George (by ID)', en_paul_neutral: 'Paul' };
+
+function voicesPage(text) {
+  const rows = VOICE_OPTIONS.map((o) => `<section class="card" style="margin-bottom:14px"><h2 style="margin:0 0 4px;font-size:18px">${esc(o.label)}</h2>
+    <p class="meta" style="margin:0 0 10px">${esc(o.price)} · setting: <code>TTS_MODEL=${esc(o.model)}</code></p>
+    ${o.voices.map((v) => `<div class="sample" data-model="${esc(o.model)}" data-voice="${esc(v)}" style="display:flex;align-items:center;gap:14px;padding:8px 0;border-top:1px solid var(--line)">
+      <span style="width:150px">${esc(VOICE_NAMES[v] || v)}</span><span class="state meta">loading…</span></div>`).join('')}</section>`).join('');
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Compare voices</title>
+<style>:root{--line:#e4e7ec}body{margin:0;font:15px/1.5 system-ui,sans-serif;background:#f7f8fa;color:#1d2433}main{max-width:820px;margin:0 auto;padding:24px 16px}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 18px}.meta{color:#667085;font-size:13px}code{font-size:12px;background:#f2f4f7;padding:1px 5px;border-radius:4px}</style></head>
+<body><main><h1 style="font-size:22px;margin:0 0 6px">Compare voices</h1>
+<p class="meta">Same sentence in each voice. Each sample costs well under a cent and is made once; replays are free. Voices that show an error aren't available under that name.</p>
+<blockquote class="card" style="margin:0 0 16px">${esc(text)}</blockquote>${rows}
+<p><a href="/">Back to the dashboard</a></p></main>
+<script>
+for (const el of document.querySelectorAll('.sample')) {
+  const q = new URLSearchParams({ model: el.dataset.model, voice: el.dataset.voice, text: ${JSON.stringify(text)} });
+  fetch('/ui/voice-sample?' + q).then(async (r) => {
+    const st = el.querySelector('.state');
+    if (!r.ok) { st.textContent = 'not available (' + (await r.text()).slice(0, 120) + ')'; return; }
+    const a = document.createElement('audio'); a.controls = true; a.src = URL.createObjectURL(await r.blob());
+    st.replaceWith(a);
+    const c = document.createElement('code'); c.textContent = 'TTS_VOICE=' + el.dataset.voice; el.appendChild(c);
+  });
+}
 </script></body></html>`;
 }
 
@@ -276,6 +312,31 @@ export async function handleDashboard(db, req, res, url) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(loginPage(name));
       return true;
     }
+  }
+  // Voice comparison: the same narration in several text-to-speech voices, to choose one by ear.
+  // Samples are cached in memory, so replaying them doesn't cost anything.
+  if (req.method === 'GET' && p === '/ui/voices') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(voicesPage(url.searchParams.get('text') || SAMPLE_TEXT));
+    return true;
+  }
+  if (req.method === 'GET' && p === '/ui/voice-sample') {
+    const model = url.searchParams.get('model') || '', voice = url.searchParams.get('voice') || '';
+    const text = (url.searchParams.get('text') || SAMPLE_TEXT).slice(0, 400);
+    if (!/^[a-z0-9-]+\/[a-z0-9.\-]+$/i.test(model) || !/^[\w.\- ]{1,64}$/.test(voice)) { res.writeHead(400, { 'Content-Type': 'text/plain' }).end('bad model or voice'); return true; }
+    const key = `${model}|${voice}|${text}`;
+    let hit = sampleCache.get(key);
+    if (!hit) {
+      const r = await fetch('https://openrouter.ai/api/v1/audio/speech', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, input: text, voice, response_format: 'mp3' }),
+      }).catch((e) => ({ ok: false, status: 0, text: async () => e.message }));
+      hit = r.ok ? { ok: true, body: Buffer.from(await r.arrayBuffer()) } : { ok: false, body: `${r.status}: ${(await r.text()).slice(0, 300)}` };
+      if (hit.ok) sampleCache.set(key, hit);
+    }
+    if (hit.ok) res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'private, max-age=3600' }).end(hit.body);
+    else res.writeHead(502, { 'Content-Type': 'text/plain' }).end(hit.body);
+    return true;
   }
   if (req.method === 'GET' && p === '/ui/voice-check') {
     // Speaks one short sentence with the configured voice, to confirm narration works without making a video.
