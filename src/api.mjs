@@ -40,7 +40,7 @@ function sharePage(v) {
 main{max-width:960px;margin:0 auto;padding:24px 16px}video{width:100%;border-radius:12px;background:#111827}
 h1{font-size:24px;margin:0 0 6px}p{color:#667085;margin:0 0 18px}ol{padding-left:20px}li span{color:#667085;font-size:14px}</style></head>
 <body><main><h1>${esc(v.title)}</h1><p>${esc(v.description)}</p>
-<video controls preload="metadata" poster="/videos/${v.slug}/thumbnail" src="/videos/${v.slug}/video"><track kind="captions" srclang="en" label="English" src="/videos/${v.slug}/captions"></video>
+<video controls preload="metadata" poster="/videos/${v.slug}/thumbnail?v=${v.version}" src="/videos/${v.slug}/video?v=${v.version}"><track kind="captions" srclang="en" label="English" src="/videos/${v.slug}/captions?v=${v.version}"></video>
 <h2 style="font-size:17px">Steps</h2><ol>${chapters}</ol>
 <p style="font-size:13px;margin-top:18px">Keyboard: Space or K to play/pause, ← → to skip 5 seconds, F for full screen.</p></main>
 <script>
