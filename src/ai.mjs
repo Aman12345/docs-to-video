@@ -11,11 +11,17 @@ export const newUsage = (model) => ({ calls: 0, costUsd: 0, inputTokens: 0, outp
 export async function chat(messages, usage, { model = AUTHOR_MODEL, maxTokens = 900 } = {}) {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error('OPENROUTER_API_KEY is not set, so the AI cannot plan or fix the video.');
+  // OpenAI GPT models think before answering, and that thinking counts toward max_tokens: keep the effort
+  // low (these are small, one-step decisions) and leave room so the answer isn't cut off.
+  const reasoning = model.startsWith('openai/');
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Title': 'docs-to-video' },
     body: JSON.stringify({
-      model, messages, max_tokens: maxTokens, temperature: 0,
+      model, messages,
+      ...(reasoning
+        ? { max_tokens: Math.max(maxTokens, 4000), reasoning: { effort: process.env.AI_REASONING_EFFORT || 'low', exclude: true } }
+        : { max_tokens: maxTokens, temperature: 0 }),
       // Anthropic models: prefer Anthropic's own servers, fall back to other hosts if they're busy.
       ...(model.startsWith('anthropic/') ? { provider: { order: ['anthropic'], allow_fallbacks: true } } : {}),
       usage: { include: true },
@@ -27,7 +33,9 @@ export async function chat(messages, usage, { model = AUTHOR_MODEL, maxTokens = 
   usage.costUsd += Number(data.usage?.cost || 0);
   usage.inputTokens += data.usage?.prompt_tokens || 0;
   usage.outputTokens += data.usage?.completion_tokens || 0;
-  return data.choices?.[0]?.message?.content || '';
+  const content = data.choices?.[0]?.message?.content || '';
+  if (!content) throw new Error(`${model} returned an empty reply (finish reason: ${data.choices?.[0]?.finish_reason || 'unknown'}).`);
+  return content;
 }
 
 export function parseJson(text) {

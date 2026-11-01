@@ -139,7 +139,7 @@ If it can't fix it, the job fails with the AI's reason and a screenshot.
 
 All AI calls go through OpenRouter: `AUTHOR_MODEL` plans videos, `REPAIR_MODEL` (defaults to AUTHOR_MODEL)
 takes over; any OpenRouter model id works (the takeover sends a screenshot, so pick one that reads images).
-`REPAIR=off` turns the takeover off; `REPAIR_MAX_TURNS` (default 4) limits tries per step. It only costs
+For example `REPAIR_MODEL=openai/gpt-6.1-terra` (OpenAI GPT-6.1 Terra: reads screenshots, about a quarter of the price of Claude Opus 5.5; GPT models get low reasoning effort, `AI_REASONING_EFFORT` changes it). Check that the models answer at `/ui/ai-check`. `REPAIR=off` turns the takeover off; `REPAIR_MAX_TURNS` (default 4) limits tries per step. It only costs
 anything when a step breaks, typically 1-5 cents.
 
 ### Quality checks and automatic fixes

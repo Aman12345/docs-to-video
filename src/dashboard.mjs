@@ -1,5 +1,6 @@
 // A small web page for the demo: pick a storyboard, click "Make video", watch the job,
 // play and approve the result. Protected with a password when DEMO_PASSWORD is set.
+import { AUTHOR_MODEL, REPAIR_MODEL, chat, parseJson, newUsage } from './ai.mjs';
 import crypto from 'node:crypto';
 import { VOICES, defaultVoice, isVoice, perVideo } from './voices.mjs';
 import fs from 'node:fs/promises';
@@ -356,6 +357,25 @@ export async function handleDashboard(db, req, res, url) {
     }
     if (hit.ok) res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'private, max-age=3600' }).end(hit.body);
     else res.writeHead(502, { 'Content-Type': 'text/plain' }).end(hit.body);
+    return true;
+  }
+  if (req.method === 'GET' && p === '/ui/ai-check') {
+    // Asks each AI model one tiny question in the same JSON format the planner and takeover use,
+    // to confirm the model id works on OpenRouter before relying on it.
+    const out = [];
+    for (const [what, model] of [['Planning (AUTHOR_MODEL)', AUTHOR_MODEL], ['Takeover (REPAIR_MODEL)', REPAIR_MODEL]]) {
+      const usage = newUsage(model), t = Date.now();
+      try {
+        const reply = parseJson(await chat([
+          { role: 'system', content: 'Reply with ONLY one JSON object.' },
+          { role: 'user', content: 'Accessibility snapshot:\n- link "Billing"\n- tab "Invoices"\n\nThe saved step clicked tab "Invoice list", which no longer exists. Reply {"do":"click","target":{"role":...,"name":...},"use":"instead","why":"..."}' },
+        ], usage, { model, maxTokens: 300 }));
+        out.push(`${what}: ${model}\n  OK in ${((Date.now() - t) / 1000).toFixed(1)}s, cost $${usage.costUsd.toFixed(5)}\n  reply: ${JSON.stringify(reply)}`);
+      } catch (e) {
+        out.push(`${what}: ${model}\n  FAILED: ${e.message.slice(0, 300)}`);
+      }
+    }
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }).end(out.join('\n\n'));
     return true;
   }
   if (req.method === 'GET' && p === '/ui/voice-check') {
