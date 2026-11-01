@@ -68,9 +68,9 @@ the logo in the caption band, a closing card, and chapter markers in the MP4. Al
 | Variable | What it does | Default |
 |---|---|---|
 | `BRAND_NAME` | Name shown when there is no logo | `Miter` |
-| `BRAND_PRIMARY` | Accent colour (highlights, step labels, click ripples) | `#4F46E5` |
-| `BRAND_DARK` | Background behind the page and captions | `#111827` |
-| `BRAND_LOGO_URL` | https link to a PNG/SVG logo (or commit `brand/logo.svg` or `brand/logo.png`) | none |
+| `BRAND_PRIMARY` | Accent colour (highlights, step labels, click ripples) | `#680BBD` (Miter purple) |
+| `BRAND_DARK` | Background behind the page and captions | `#260F14` (Miter midnight) |
+| `BRAND_LOGO_URL` | https link to a PNG/SVG logo (or commit `brand/logo.svg` or `brand/logo.png`) | `brand/logo.svg` (Miter logo from miter.com) |
 | `BRAND_TAGLINE` / `BRAND_SUPPORT` | Lines on the intro and closing cards | `Miter Help Center` / support line |
 | `NARRATION` | `on` adds a spoken voiceover (OpenRouter text-to-speech); captions are always on | off |
 | `TTS_MODEL` / `TTS_VOICE` | Voice model and voice | `mistralai/voxtral-mini-tts-3-0` / `en_paul_neutral` |

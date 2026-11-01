@@ -41,7 +41,23 @@ main{max-width:960px;margin:0 auto;padding:24px 16px}video{width:100%;border-rad
 h1{font-size:24px;margin:0 0 6px}p{color:#667085;margin:0 0 18px}ol{padding-left:20px}li span{color:#667085;font-size:14px}</style></head>
 <body><main><h1>${esc(v.title)}</h1><p>${esc(v.description)}</p>
 <video controls preload="metadata" poster="/videos/${v.slug}/thumbnail" src="/videos/${v.slug}/video"><track kind="captions" srclang="en" label="English" src="/videos/${v.slug}/captions"></video>
-<h2 style="font-size:17px">Steps</h2><ol>${chapters}</ol></main></body></html>`;
+<h2 style="font-size:17px">Steps</h2><ol>${chapters}</ol>
+<p style="font-size:13px;margin-top:18px">Keyboard: Space or K to play/pause, ← → to skip 5 seconds, F for full screen.</p></main>
+<script>
+// Space normally scrolls the page unless the player has focus; make it control the video instead.
+const vid = document.querySelector('video');
+document.addEventListener('keydown', (e) => {
+  if (e.target.closest('input,textarea,select,button') || e.target === vid || e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k === ' ' || k === 'k') { vid.paused ? vid.play() : vid.pause(); }
+  else if (k === 'arrowright') vid.currentTime = Math.min(vid.duration || 0, vid.currentTime + 5);
+  else if (k === 'arrowleft') vid.currentTime = Math.max(0, vid.currentTime - 5);
+  else if (k === 'f') { document.fullscreenElement ? document.exitFullscreen() : vid.requestFullscreen?.(); }
+  else return;
+  e.preventDefault();
+});
+document.querySelectorAll('ol a').forEach((a) => a.addEventListener('click', () => vid.play()));
+</script></body></html>`;
 }
 
 const server = http.createServer(async (req, res) => {

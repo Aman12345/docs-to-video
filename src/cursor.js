@@ -4,7 +4,7 @@
 (() => {
   const install = () => {
     if (document.getElementById('__demo_cursor')) return;
-    const color = (window.__demoBrand && window.__demoBrand.primary) || '#4F46E5';
+    const color = (window.__demoBrand && window.__demoBrand.primary) || '#680BBD';
     const style = document.createElement('style');
     style.textContent = `
       #__demo_cursor { position: fixed; left: 0; top: 0; width: 28px; height: 28px; z-index: 2147483647; pointer-events: none;

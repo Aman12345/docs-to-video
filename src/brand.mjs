@@ -1,8 +1,8 @@
 // Brand kit for the videos. Everything is a setting, so Miter's real logo and colours can be
 // dropped in without code changes:
 //   BRAND_NAME        e.g. "Miter"
-//   BRAND_PRIMARY     main accent colour, e.g. "#4F46E5" (highlights, step labels, ripples)
-//   BRAND_DARK        background of the frame and caption band, e.g. "#0F172A"
+//   BRAND_PRIMARY     main accent colour, Miter purple "#680BBD" by default (highlights, step labels, ripples)
+//   BRAND_DARK        background of the frame and caption band, Miter midnight "#260F14" by default
 //   BRAND_LOGO_URL    https link to a PNG or SVG logo (or put a file at brand/logo.svg / brand/logo.png)
 //   BRAND_TAGLINE     small line on the intro card, e.g. "Miter Help Center"
 //   BRAND_SUPPORT     line on the closing card, e.g. "Questions? Chat with us in Miter"
@@ -37,8 +37,8 @@ export async function getBrand() {
   const hex = (v, d) => (/^#?[0-9a-f]{6}$/i.test(v || '') ? `#${v.replace('#', '')}` : d);
   cached = {
     name: process.env.BRAND_NAME || 'Miter',
-    primary: hex(process.env.BRAND_PRIMARY, '#4F46E5'),
-    dark: hex(process.env.BRAND_DARK, '#111827'),
+    primary: hex(process.env.BRAND_PRIMARY, '#680BBD'),
+    dark: hex(process.env.BRAND_DARK, '#260F14'),
     tagline: process.env.BRAND_TAGLINE || `${process.env.BRAND_NAME || 'Miter'} Help Center`,
     support: process.env.BRAND_SUPPORT || 'Questions? Reach out to our support team.',
     logo: await logoDataUri(),
