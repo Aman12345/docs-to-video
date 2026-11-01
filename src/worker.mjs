@@ -46,6 +46,7 @@ export async function startWorker() {
   const state = { stopping: false, current: null };
   const bootAt = Date.now();
   let handled = null; // RUN_ONCE: the one job this process records
+  let lastFailed = false; // RUN_ONCE: whether that job ended up failed
   const loop = (async () => {
     while (!state.stopping) {
       // Jobs whose worker stopped checking in (server restarted or crashed) go back to the queue.
@@ -131,6 +132,7 @@ export async function startWorker() {
         }
         const retry = job.attempts < 2 && !/Claude stopped|AI stopped|OPENROUTER_API_KEY|did not find any steps|Saved login/.test(err.message);
         await jobs.updateOne({ _id: job._id }, { $set: { status: retry ? 'queued' : 'failed', error: err.message.slice(0, 2000), ...(failShot ? { failShot } : {}) } });
+        if (!retry) lastFailed = true;
         state.current = null;
         log(`failed (${retry ? 'will retry' : 'giving up'}): ${err.message.split('\n')[0]}`);
         // A re-record that fails usually means the app changed under the saved steps: flag the video.
@@ -142,6 +144,7 @@ export async function startWorker() {
       }
     }
     demo?.server.close();
+    return lastFailed;
   })();
 
   // On a deploy or restart, Render stops this instance after a short grace period, far shorter than a
@@ -159,7 +162,8 @@ export async function startWorker() {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const worker = await startWorker();
-  if (RUN_ONCE) worker.done.then(async () => { await closeDb(); process.exit(0); });
+  // Exit code 1 when the video failed, so GitHub / Cloud Run show the run as failed (red), not green.
+  if (RUN_ONCE) worker.done.then(async (failed) => { await closeDb(); process.exit(failed ? 1 : 0); });
   process.on('SIGTERM', async () => {
     console.log('SIGTERM: handing the current job back to the queue, then exiting');
     await worker.handBack();
