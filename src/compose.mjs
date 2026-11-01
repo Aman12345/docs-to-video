@@ -175,29 +175,14 @@ export async function compose({ rawPath, timeline: rawTimeline, outDir, brand, c
   const card = CHAPTER_CARD_MS / 1000;
   const scenes = timeline.scenes.map((s) => ({ ...s, a: s.start / 1000, b: s.end / 1000 }));
 
-  // Captions: short chunks (a few words each) timed across the spoken sentence, shifted for the intro.
+  // Captions, timed across each spoken sentence (shifted for the intro). See timeCues for the rules.
   const cues = scenes.flatMap((s, i) => {
     const from = INTRO + s.a + card + 0.15;
     const span = voice[i] ? voice[i].ms / 1000 : Math.max(1.5, s.b - s.a - card - 0.4);
-    const chunks = captionChunks(s.narration, Math.max(1, Math.floor(span / 1.8)));
-    const total = chunks.reduce((n, c) => n + c.length, 0) || 1;
-    let t = from;
-    return chunks.map((text, k) => {
-      const dur = (span * text.length) / total;
-      const cue = { from: t, to: k === chunks.length - 1 ? Math.max(t + dur, INTRO + s.b - 0.1) : t + dur, text, scene: i };
-      t += dur;
-      return cue;
-    });
+    return timeCues(s.narration, from, span, INTRO + s.b - 0.1).map((c) => ({ ...c, scene: i }));
   });
-  // Captions for the spoken intro and outro.
-  const bookend = (text, from, span) => {
-    const chunks = captionChunks(text, Math.max(1, Math.floor(span / 1.8)));
-    const len = chunks.reduce((k, c) => k + c.length, 0) || 1;
-    let t = from;
-    return chunks.map((c) => { const d = (span * c.length) / len; const cue = { from: t, to: t + d, text: c }; t += d; return cue; });
-  };
-  if (introText) cues.unshift(...bookend(introText, 0.5, introVoice ? introVoice.ms / 1000 : INTRO - 0.9));
-  if (outroText) cues.push(...bookend(outroText, INTRO + rawDur + 0.6, outroVoice ? outroVoice.ms / 1000 : OUTRO - 1.0));
+  if (introText) cues.unshift(...timeCues(introText, 0.5, introVoice ? introVoice.ms / 1000 : INTRO - 0.9));
+  if (outroText) cues.push(...timeCues(outroText, INTRO + rawDur + 0.6, outroVoice ? outroVoice.ms / 1000 : OUTRO - 1.0));
   const srtPath = path.join(outDir, 'captions.srt');
   await fs.writeFile(srtPath, cues.map((c, i) => `${i + 1}\n${ts(c.from, ',')} --> ${ts(c.to, ',')}\n${c.text}\n`).join('\n'));
   await fs.writeFile(path.join(outDir, 'captions.vtt'), `WEBVTT\n\n${cues.map((c) => `${ts(c.from, '.')} --> ${ts(c.to, '.')}\n${c.text}\n`).join('\n')}`);
@@ -299,40 +284,79 @@ export async function compose({ rawPath, timeline: rawTimeline, outDir, brand, c
   };
 }
 
-// Splits a sentence into caption chunks of about 7-9 words (one readable line), preferring breaks
-// after punctuation, never leaving a tiny last chunk.
-function captionChunks(text, maxChunks) {
+// Caption rules (from broadcast subtitle guidelines, e.g. Netflix's timed-text guide): at most two lines
+// of about 42 characters, broken at natural phrase boundaries, each shown at least 1.2 s (never under
+// 5/6 s) and read at no more than about 17 characters per second.
+const CAPTION_MAX_CHARS = 84, CAPTION_MIN_SEC = 1.2;
+const BREAK_BEFORE = /^(and|but|or|so|then|to|in|on|at|for|with|from|until|when|while|which|that)$/i;
+
+export function captionChunks(text) {
   const words = String(text || '').split(/\s+/).filter(Boolean);
-  const per = Math.max(7, Math.ceil(words.length / Math.max(1, maxChunks)));
   const out = [];
   let cur = [];
-  words.forEach((w, i) => {
+  const len = (ws) => ws.join(' ').length;
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    // Start a new caption before it gets too long, preferring a clause boundary in the last few words.
+    if (cur.length && len([...cur, w]) > CAPTION_MAX_CHARS) {
+      // Best break: after punctuation, else before a linking word, keeping the first part a decent length.
+      let cut = cur.length, best = 0;
+      for (let k = cur.length - 1; k >= 2; k--) {
+        if (len(cur.slice(0, k)) < 28) break;
+        const score = /[,.;:!?]$/.test(cur[k - 1]) ? 2 : BREAK_BEFORE.test(cur[k]) ? 1 : 0;
+        if (score > best) { best = score; cut = k; }
+      }
+      out.push(cur.slice(0, cut).join(' '));
+      cur = cur.slice(cut);
+    }
     cur.push(w);
-    const left = words.length - i - 1;
-    const atPunct = /[,.;:!?]$/.test(w) && cur.length >= 4;
-    if ((cur.length >= per || (atPunct && cur.length >= per - 3)) && left >= 3) { out.push(cur.join(' ')); cur = []; }
-  });
+    // A sentence end is a natural place to start the next caption.
+    if (/[.!?]$/.test(w) && len(cur) >= 30 && i < words.length - 1) { out.push(cur.join(' ')); cur = []; }
+  }
   if (cur.length) out.push(cur.join(' '));
   return out;
 }
 
+// Spreads the captions of one spoken line over its duration (by length), then merges any caption that
+// would show for less than CAPTION_MIN_SEC into its neighbour, so nothing flashes by.
+function timeCues(text, from, span, lastUntil) {
+  let chunks = captionChunks(text);
+  const durOf = (cs) => { const total = cs.reduce((n, c) => n + c.length, 0) || 1; return cs.map((c) => (span * c.length) / total); };
+  for (let d = durOf(chunks); chunks.length > 1 && Math.min(...d) < CAPTION_MIN_SEC; d = durOf(chunks)) {
+    const k = d.indexOf(Math.min(...d));
+    const j = k === 0 ? 1 : k === chunks.length - 1 ? k - 1 : (d[k - 1] < d[k + 1] ? k - 1 : k + 1);
+    const [a, b] = [Math.min(j, k), Math.max(j, k)];
+    chunks = [...chunks.slice(0, a), `${chunks[a]} ${chunks[b]}`, ...chunks.slice(b + 1)];
+  }
+  const d = durOf(chunks);
+  let t = from;
+  return chunks.map((c, k) => {
+    const end = k === chunks.length - 1 ? Math.max(t + d[k], lastUntil ?? t + d[k]) : t + d[k];
+    const cue = { from: t, to: Math.max(end, t + CAPTION_MIN_SEC), text: c };
+    t += d[k];
+    return cue;
+  });
+}
+
 // ---- Quality checks on the finished file (idea from aidemo's qa) ----
 // Warnings, not failures: the video is still saved, and the dashboard shows what to look at.
+// Each warning has a code, so the pipeline knows which automatic fix applies (see pipeline.mjs).
 async function qualityCheck({ mp4Path, stepFrames, cues, narrated, total, scenes }) {
-  const warnings = [];
+  const found = [];
+  const warn = (code, message, extra = {}) => found.push({ code, message, ...extra });
   for (const [i, f] of stepFrames.entries()) {
     // Edge density: real screens (text, buttons, tables) score about 1-5; a blank or loading page is near 0.
     const log = await runLog('ffmpeg', ['-hide_banner', '-i', f, '-vf', 'edgedetect=low=0.1:high=0.3,signalstats,metadata=print', '-f', 'null', '-']).catch(() => '');
     const edges = Number(/YAVG=([\d.]+)/.exec(log)?.[1]);
-    if (Number.isFinite(edges) && edges < 0.15) warnings.push(`Step ${i + 1} ("${scenes[i].chapter}") ends on an almost blank screen. The page may not have loaded.`);
+    if (Number.isFinite(edges) && edges < 0.15) warn('blank-step', `Step ${i + 1} ("${scenes[i].chapter}") ends on an almost blank screen. The page may not have loaded.`, { step: i });
   }
   if (narrated) {
     const log = await runLog('ffmpeg', ['-hide_banner', '-i', mp4Path, '-vn', '-af', 'volumedetect', '-f', 'null', '-']).catch(() => '');
     const max = Number(/max_volume: (-?[\d.]+) dB/.exec(log)?.[1]);
-    if (!Number.isFinite(max) || max < -30) warnings.push('The voiceover is silent or very quiet.');
+    if (!Number.isFinite(max) || max < -30) warn('silent-voice', 'The voiceover is silent or very quiet.');
   }
   const flash = cues.filter((c) => c.to - c.from < 1.0);
-  if (flash.length) warnings.push(`${flash.length} caption${flash.length > 1 ? 's' : ''} show for under a second (hard to read).`);
-  if (total > 180) warnings.push(`The video is ${Math.round(total)}s long; how-to videos work best under 2 minutes. Consider splitting it.`);
-  return { ok: warnings.length === 0, warnings, checkedAt: new Date().toISOString() };
+  if (flash.length) warn('short-caption', `${flash.length} caption${flash.length > 1 ? 's' : ''} show for under a second (hard to read).`);
+  if (total > 360) warn('too-long', `The video is ${Math.round(total / 60)} minutes long; how-to videos work best at 2 to 6 minutes. Consider splitting it into separate videos.`);
+  return { ok: found.length === 0, warnings: found.map((f) => f.message), codes: found.map((f) => f.code), found, checkedAt: new Date().toISOString() };
 }

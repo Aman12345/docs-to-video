@@ -4,7 +4,6 @@
 
 const lowerFirst = (s) => (/^[A-Z][a-z]/.test(s) ? s[0].toLowerCase() + s.slice(1) : s);
 const task = (title) => lowerFirst(String(title || 'do this').replace(/^how to\s+/i, '').replace(/[.!?]+$/, ''));
-const list = (xs) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
 const productName = (brand) => brand?.name || process.env.BRAND_NAME || 'Miter';
 
 // "in Miter" is added only for the product's own screens, and only if the title doesn't already say
@@ -22,10 +21,13 @@ export function displayTitle(sb, brand) {
   return `How to ${task(sb.title)}${inProduct(sb, brand)}`;
 }
 
+// Short opening: the outcome and how many steps. The steps themselves are listed on the intro card,
+// so the voice doesn't read them out (don't narrate what's already on screen).
+const NUM = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
 export function introText(sb, brand) {
   if (sb.intro) return sb.intro;
-  const steps = sb.scenes.map((s) => lowerFirst(s.chapter));
-  return `Here's how to ${task(sb.title)}${inProduct(sb, brand)}, in ${steps.length} step${steps.length === 1 ? '' : 's'}: ${list(steps)}.`;
+  const n = sb.scenes.length;
+  return `Here's how to ${task(sb.title)}${inProduct(sb, brand)}. It takes ${NUM[n] || n} quick step${n === 1 ? '' : 's'}.`;
 }
 
 // The video ends on one short line, never a recap of the steps.

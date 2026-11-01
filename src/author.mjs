@@ -26,7 +26,7 @@ Reply with ONLY one JSON object describing the single next action:
  "text": "Worked for", "seconds": 300,   // for wait: text that appears once the work is finished
  "gone": true,            // optional, for wait: wait until "text" (e.g. "Working") DISAPPEARS instead
  "why": "short reason",
- "narration": "one short, friendly sentence a narrator says to the viewer for this step"}
+ "narration": "one short spoken sentence for this step: where, then the action, using the exact label"}
 
 Rules:
 - Copy roles and names exactly from the snapshot. Prefer {"role","name"}. If several elements share
@@ -42,6 +42,26 @@ Rules:
 - Never type passwords, payment details or personal information, and never place an order or
   complete a purchase. Adding an item to a cart is fine.
 - For cookie or consent banners, choose reject / decline / necessary-only. Close unrelated popups.`;
+
+// How to write the spoken script. Drawn from instructional-video and UI-writing guidance: TechSmith's
+// video-length research (one focused task, short opening), Mayer's multimedia principles (signal what
+// matters, segment, don't read the screen aloud, conversational "you"), tight screen-recording scripts
+// (short spoken sentences, verb first, exact values), and the Microsoft / Google style guides for UI
+// instructions (location first, exact label, "select" / "enter" / "turn on", no element-type words).
+const SCRIPT_RULES = `How to write the narration (it is spoken by a voice and shown as captions):
+- Sound like a calm, friendly product trainer talking to one person. Use "you", present tense, active voice.
+  No hype, filler or jokes, and never "simply", "just", "go ahead and", "let's", "now I'll", "as you can see".
+- One idea per sentence; keep sentences under about 15 words. Each step's narration: 1-2 sentences, max 25 words.
+- Say where, then what, using the exact on-screen label: "In Spend, open Reimbursements." "Select Create."
+  Verbs: "select" for buttons, tabs, links, menu items and list options; "enter" for typing a value;
+  "choose" for picking from a list; "turn on" / "turn off" for toggles; "go to" for navigation.
+  Don't name the element type (button, tab, dropdown) unless it is needed to find it.
+- Speak exact values: "Enter 42.50 as the amount." Use realistic example data naturally; don't call it fake.
+- Add at most one short reason when it helps: "so the expense is costed to the right job."
+- Don't read every word on the screen; name only what the viewer needs to act on, and what they should see next.
+- Step titles (chapters): 2-4 words, verb first, sentence case: "Open Reimbursements", "Enter the amount".
+- Intro: max 20 words. Say the outcome, then "It takes N quick steps." Add a prerequisite only if one is
+  really needed ("You'll need admin access."). Don't list the steps; they are shown on screen.`;
 
 // Extra rules when signed in to a company's own app (e.g. Miter staging) with a saved login.
 const SIGNED_IN_RULES = `
@@ -158,7 +178,7 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
   const list = actions.map((a, i) => `${i}. ${describe(a)} | narration idea: ${a.narration || ''}`).join('\n');
   const outline = parseJson(await chat([
     { role: 'system', content: 'You write short how-to video storyboards. Reply with ONLY one JSON object.' },
-    { role: 'user', content: `Goal of the video: ${prompt}\n\nThese browser actions were performed, in order:\n${list}\n\nGroup them into 2 to 5 scenes, in order, using every action index exactly once. Return:\n{"title": "short task-style title in sentence case, starting with a verb, e.g. Create a reimbursement (capitalise only names and product terms)", "description": "one sentence", "answersQuestions": ["3 ways a user might ask for this"], "intro": "spoken opening, max 25 words: what the viewer will learn and the steps in order", "checks": ["2-3 short things the viewer can check to confirm it worked"], "scenes": [{"chapter": "2-4 word step title", "narration": "one or two short sentences, max 25 words, speaking to the viewer", "steps": [0, 1]}]}` },
+    { role: 'user', content: `Goal of the video: ${prompt}\n\nThese browser actions were performed, in order:\n${list}\n\n${SCRIPT_RULES}\n\nGroup them into 2 to 5 scenes (steps), in order, using every action index exactly once. Return:\n{"title": "short task-style title in sentence case, starting with a verb, e.g. Create a reimbursement (capitalise only names and product terms)", "description": "one sentence", "answersQuestions": ["3 ways a user might ask for this"], "intro": "spoken opening, max 20 words, following the intro rule", "checks": ["2-3 short things the viewer can check to confirm it worked"], "scenes": [{"chapter": "2-4 word step title", "narration": "1-2 short spoken sentences, max 25 words, following the narration rules", "steps": [0, 1]}]}` },
   ], usage, 1500));
 
   const used = new Set();

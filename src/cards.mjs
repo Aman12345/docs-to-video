@@ -78,7 +78,7 @@ const chipHtml = (brand, i, n, sc) => page(`<div id="el" style="display:inline-b
   </div></div>`);
 
 const captionHtml = (brand, text) => page(`<div id="el" style="display:inline-block;padding:20px 24px 28px">
-  <div style="max-width:1320px;background:${brand.primary};color:#fff;border-radius:24px;padding:21px 39px;font-size:29px;font-weight:600;line-height:1.4;text-align:center;box-shadow:0 14px 36px rgba(60,20,110,.28)">${esc(text)}</div></div>`);
+  <div style="max-width:820px;background:${brand.primary};color:#fff;border-radius:24px;padding:20px 38px;font-size:29px;font-weight:600;line-height:1.4;text-align:center;text-wrap:balance;box-shadow:0 14px 36px rgba(60,20,110,.28)">${esc(text)}</div></div>`);
 
 const logoHtml = (brand) => page(`<div id="el" style="display:inline-block;padding:4px;opacity:.85">${logo(brand, 30, true)}</div>`);
 

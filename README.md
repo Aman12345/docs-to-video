@@ -114,3 +114,24 @@ Use a test account with demo data: share links are public and videos show whatev
 Purple intro card ("How to … in Miter" with the list of steps), full-screen app with a "Step 2 of 4" chip
 top-right and purple caption pills, a pulsing ring around each control before it is clicked, and a white
 "You're all set" closing card with check-your-work chips. Font: Plus Jakarta Sans (bundled via npm).
+
+### Quality checks and automatic fixes
+
+Every finished video is checked. Warnings have codes, and some are fixed automatically, once each:
+
+| Warning | What happens |
+|---|---|
+| Voice silent or very quiet | The voice is made again and the video re-edited (same recording). |
+| A step ends on a blank screen | Re-recorded once in slow mode (longer waits for pages to load). |
+| Caption shorter than a second | Prevented: captions are merged until each shows at least 1.2 s. |
+| Video longer than 6 minutes | Flagged only (split it into separate videos). |
+
+If a fix doesn't help, the video stays a draft with the warning and what was tried, for a person to decide.
+
+### Script and caption rules
+
+Claude writes narration by a short style guide (see `SCRIPT_RULES` in `src/author.mjs`): one idea per sentence
+(under ~15 words), location first then the action with the exact on-screen label ("In Spend, open Reimbursements."),
+"select / enter / choose / turn on", exact values spoken, no filler, and a short intro that states the outcome and
+the number of steps. Captions follow broadcast subtitle limits (2 lines of ~42 characters, at least 1.2 s each,
+broken at phrase boundaries). The written SOP uses the same wording ("In **Amount**, enter `42.50`.").

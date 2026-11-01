@@ -7,34 +7,43 @@ import { introText, outroText, checksFor } from './narrative.mjs';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const mdEsc = (s) => String(s ?? '').replace(/([*_`[\]])/g, '\\$1');
 
-const targetName = (t = {}) => t.name || t.label || t.placeholder || t.text || t.testId || 'the highlighted item';
 
-// One plain-English instruction per recorded action.
+// One plain-English instruction per recorded action, following the Microsoft / Google UI-writing style:
+// location first, the exact label in bold, "select" / "enter" / "choose", no element-type words.
+const named = (t = {}) => t.name || t.label || t.placeholder || t.text || t.testId || '';
 export function instructions(scene) {
   return (scene.steps || []).map((st) => {
-    const n = targetName(st.target);
+    const n = named(st.target);
+    const role = st.target?.role;
     switch (st.do) {
-      case 'click': return { verb: 'Click', what: n };
-      case 'fill': return st.value ? { verb: 'Enter', value: st.value, what: n } : { verb: 'Clear', what: n };
-      case 'select': return { verb: 'Choose', value: st.value, what: n };
+      case 'click':
+        if (role === 'combobox') return n ? { verb: 'Open the', what: n, tail: 'list' } : { verb: 'Open the list.', plain: true, what: '' };
+        if (role === 'checkbox') return { verb: 'Select', what: n || 'the checkbox' };
+        if (role === 'switch') return { verb: 'Turn on', what: n || 'the setting' };
+        return { verb: 'Select', what: n || 'the highlighted item' };
+      case 'fill': return st.value ? { where: n, verb: 'enter', value: st.value } : { verb: 'Clear', what: n };
+      case 'select': return { where: n, verb: 'choose', what: st.value };
       case 'press': return { verb: 'Press', what: st.key || 'Enter' };
-      case 'hover': return { verb: 'Point at', what: n };
+      case 'hover': return { verb: 'Point to', what: n };
       case 'goto': return { verb: 'Go to', what: st.url };
       case 'scroll': return { verb: 'Scroll', what: (st.dy || 500) < 0 ? 'up' : 'down', plain: true };
       case 'wait': return st.gone
-        ? { verb: 'Wait until', what: st.text || 'the busy indicator', note: 'disappears; this can take a few minutes' }
+        ? { verb: 'Wait until', what: st.text || 'the busy indicator', tail: 'disappears', note: 'this can take a few minutes' }
         : { verb: 'Wait until you see', what: st.text || 'the result', note: 'this can take a few minutes' };
       default: return null; // expect / pause: nothing for the reader to do
     }
   }).filter(Boolean);
 }
 
-const mdLine = (i) => i.plain ? `${i.verb} ${i.what}.`
-  : i.value !== undefined ? `${i.verb} \`${i.value}\` in **${mdEsc(i.what)}**.`
-    : `${i.verb} **${mdEsc(i.what)}**${i.note ? ` (${i.note})` : ''}.`;
-const htmlLine = (i) => i.plain ? `${esc(i.verb)} ${esc(i.what)}.`
-  : i.value !== undefined ? `${esc(i.verb)} <code>${esc(i.value)}</code> in <strong>${esc(i.what)}</strong>.`
-    : `${esc(i.verb)} <strong>${esc(i.what)}</strong>${i.note ? ` (${esc(i.note)})` : ''}.`;
+const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+function line(i, bold, code, esc0) {
+  if (i.plain) return `${i.verb}${i.what ? ` ${esc0(i.what)}` : ''}${/[.]$/.test(i.verb) ? '' : '.'}`;
+  if (i.where !== undefined && i.value !== undefined) return i.where ? `In ${bold(i.where)}, ${i.verb} ${code(i.value)}.` : `${cap(i.verb)} ${code(i.value)}.`;
+  if (i.where !== undefined) return i.where ? `In ${bold(i.where)}, ${i.verb} ${bold(i.what)}.` : `${cap(i.verb)} ${bold(i.what)}.`;
+  return `${i.verb} ${bold(i.what)}${i.tail ? ` ${i.tail}` : ''}${i.note ? ` (${esc0(i.note)})` : ''}.`;
+}
+const mdLine = (i) => line(i, (t) => `**${mdEsc(t)}**`, (t) => `\`${t}\``, (t) => t);
+const htmlLine = (i) => line(i, (t) => `<strong>${esc(t)}</strong>`, (t) => `<code>${esc(t)}</code>`, esc);
 
 export function sopMarkdown(v, baseUrl) {
   const scenes = v.storyboard?.scenes || [];

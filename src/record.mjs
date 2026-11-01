@@ -32,7 +32,8 @@ async function glide(page, x, y, steps = 36) {
 // How long a scene must last: long enough to read the caption, and to finish its voiceover.
 const sceneMinMs = (text, voiceMs = 0) => Math.max(3500, (text.split(/\s+/).length / 2.6) * 1000 + 1200, voiceMs ? CHAPTER_CARD_MS + voiceMs + 700 : 0);
 
-export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs = [], storageState }) {
+// slow: used for an automatic re-record after a blank-screen warning; gives pages more time to load.
+export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs = [], storageState, slow = false }) {
   await fs.mkdir(outDir, { recursive: true });
   const videoPath = path.join(outDir, 'raw.webm');
   const browser = await chromium.launch(LAUNCH); // headless; Render has no display
@@ -89,7 +90,8 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
           scene: i, do: step.do, zoom: !!step.zoom, start: aStart, end: now() + 900,
           box: { x: box.x, y: box.y, w: box.width, h: box.height },
         });
-        await sleep(900);
+        await sleep(slow ? 2200 : 900);
+        if (slow) await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
       }
       const last = i === storyboard.scenes.length - 1;
       const left = sceneMinMs(scene.narration, voiceMs[i]) + (last ? 1200 : 0) - (now() - start - skipped);
