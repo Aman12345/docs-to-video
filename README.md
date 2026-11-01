@@ -22,7 +22,7 @@ plus ffmpeg). `render.yaml` is a Render Blueprint for both services and their sh
 2. In MongoDB Atlas: Network Access, allow `0.0.0.0/0` for the demo (or Render's outbound IPs), and copy the connection string.
 3. In Render: New, Web Service, pick the repo, runtime **Docker**, instance **Standard** (1 CPU, 2 GB).
 4. Environment variables: `MONGODB_URI` (from Atlas), `DEMO_PASSWORD` (any password), optional `OPENROUTER_API_KEY` for narration, optional `APP_URL` to film a different app.
-5. Open the service URL, log in with any username and `DEMO_PASSWORD`, pick a storyboard and click **Make video** (about 1–2 minutes).
+5. Open the service URL, log in with `DEMO_USER` (any username if unset) and `DEMO_PASSWORD`, pick a storyboard and click **Make video** (about 1–2 minutes).
 
 The default start command (`node src/server.mjs`) runs the page, API, worker and the sample app in one process.
 For production, use `render.yaml`: separate `video-api` and `video-worker` services.

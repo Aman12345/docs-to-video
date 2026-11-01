@@ -1,5 +1,6 @@
 // A small web page for the demo: pick a storyboard, click "Make video", watch the job,
 // play and approve the result. Protected with a password when DEMO_PASSWORD is set.
+import crypto from 'node:crypto';
 import { VOICES, defaultVoice, isVoice, perVideo } from './voices.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -25,12 +26,17 @@ function readForm(req) {
   });
 }
 
+// Basic auth: DEMO_PASSWORD, plus DEMO_USER as the username when it is set.
+const same = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
+export function basicAuthOk(header = '') {
+  if (!header.startsWith('Basic ')) return false;
+  const [user, ...rest] = Buffer.from(header.slice(6), 'base64').toString().split(':');
+  const userOk = process.env.DEMO_USER ? same(user, process.env.DEMO_USER) : true;
+  return same(rest.join(':'), process.env.DEMO_PASSWORD || '') && userOk;
+}
 function allowed(req, res) {
-  const pw = process.env.DEMO_PASSWORD;
-  if (!pw) return true;
-  const [, b64] = (req.headers.authorization || '').split(' ');
-  const pass = b64 ? Buffer.from(b64, 'base64').toString().split(':').slice(1).join(':') : '';
-  if (pass === pw) return true;
+  if (!process.env.DEMO_PASSWORD) return true;
+  if (basicAuthOk(req.headers.authorization)) return true;
   res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="docs-to-video demo"' }).end('Password required');
   return false;
 }

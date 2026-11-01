@@ -4,7 +4,7 @@ import { isVoice } from './voices.mjs';
 import http from 'node:http';
 import { ObjectId } from 'mongodb';
 import { getDb, ensureIndexes, bucket } from './store.mjs';
-import { handleDashboard, queueRerecords } from './dashboard.mjs';
+import { handleDashboard, queueRerecords, basicAuthOk } from './dashboard.mjs';
 import { sopMarkdown, guideHtml } from './sop.mjs';
 
 const PORT = Number(process.env.PORT) || 10000;
@@ -78,8 +78,7 @@ const server = http.createServer(async (req, res) => {
     // Write and search routes need API_KEY (Bearer) if set, otherwise the demo password (Basic auth).
     const auth = req.headers.authorization || '';
     const demoPw = process.env.DEMO_PASSWORD;
-    const basicPw = auth.startsWith('Basic ') ? Buffer.from(auth.slice(6), 'base64').toString().split(':').slice(1).join(':') : null;
-    const authed = API_KEY ? auth === `Bearer ${API_KEY}` : demoPw ? basicPw === demoPw : true;
+    const authed = API_KEY ? auth === `Bearer ${API_KEY}` : demoPw ? basicAuthOk(auth) : true;
 
     if (url.pathname === '/health') return json(res, 200, { ok: true });
     if (await handleDashboard(db, req, res, url)) return;
