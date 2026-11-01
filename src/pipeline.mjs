@@ -1,21 +1,31 @@
-// One job, start to finish: record -> compose -> store in MongoDB.
+// One job, start to finish: voiceover -> record -> branded cards -> compose -> store in MongoDB.
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { record } from './record.mjs';
-import { compose } from './compose.mjs';
+import { compose, synthesizeVoice } from './compose.mjs';
+import { renderCards } from './cards.mjs';
+import { getBrand } from './brand.mjs';
 import { getDb, ensureIndexes, saveVideo, closeDb } from './store.mjs';
 import { startDemoApp } from './demo-server.mjs';
+
+const secs = (t) => ((Date.now() - t) / 1000).toFixed(1);
 
 export async function makeVideo({ storyboard, baseUrl, jobId, log = console.log }) {
   const workDir = await fs.mkdtemp(path.join(os.tmpdir(), `video-${storyboard.id}-`));
   try {
+    const brand = await getBrand();
     let t = Date.now();
-    const { videoPath, timeline } = await record({ storyboard, baseUrl, outDir: workDir });
-    log(`recorded ${timeline.scenes.length} scenes in ${((Date.now() - t) / 1000).toFixed(1)}s`);
+    // Voice first, so the recorder holds each scene long enough for its sentence.
+    const voice = await synthesizeVoice(storyboard.scenes, workDir, log);
+    if (voice.length) log(`voiceover: ${voice.length} clips in ${secs(t)}s`);
     t = Date.now();
-    const composed = await compose({ rawPath: videoPath, timeline, outDir: workDir });
-    log(`composed ${composed.durationSec}s video in ${((Date.now() - t) / 1000).toFixed(1)}s (narration: ${composed.narrated ? 'yes' : 'off, captions only'})`);
+    const { videoPath, timeline } = await record({ storyboard, baseUrl, outDir: workDir, brand, voiceMs: voice.map((v) => v.ms) });
+    log(`recorded ${timeline.scenes.length} scenes in ${secs(t)}s`);
+    t = Date.now();
+    const cards = await renderCards({ storyboard, brand, outDir: workDir });
+    const composed = await compose({ rawPath: videoPath, timeline, outDir: workDir, brand, cards, voice, storyboard });
+    log(`composed ${composed.durationSec}s ${brand.name}-branded video in ${secs(t)}s (audio: ${composed.narrated ? 'voiceover + captions' : 'captions only'})`);
     const db = await getDb();
     await ensureIndexes(db);
     const saved = await saveVideo(db, { storyboard, composed, jobId });

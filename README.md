@@ -59,3 +59,20 @@ node src/worker.mjs                                       # processes queued job
 
 The Claude authoring agent (guide + code to storyboard), the Slack bot, Atlas Search/Vector Search
 (local MongoDB uses a text index instead), and re-rendering on GitHub merges.
+
+## Branding and voiceover
+
+Every video gets a branded intro card, a title card at the start of each chapter, a "Step 2/4" label,
+the logo in the caption band, a closing card, and chapter markers in the MP4. All set by environment variables:
+
+| Variable | What it does | Default |
+|---|---|---|
+| `BRAND_NAME` | Name shown when there is no logo | `Miter` |
+| `BRAND_PRIMARY` | Accent colour (highlights, step labels, click ripples) | `#4F46E5` |
+| `BRAND_DARK` | Background behind the page and captions | `#111827` |
+| `BRAND_LOGO_URL` | https link to a PNG/SVG logo (or commit `brand/logo.svg` or `brand/logo.png`) | none |
+| `BRAND_TAGLINE` / `BRAND_SUPPORT` | Lines on the intro and closing cards | `Miter Help Center` / support line |
+| `NARRATION` | `on` adds a spoken voiceover (OpenRouter text-to-speech); captions are always on | off |
+| `TTS_MODEL` / `TTS_VOICE` | Voice model and voice | `mistralai/voxtral-mini-tts-3-0` / `en_paul_neutral` |
+
+If text-to-speech fails, the video is still made with captions only.
