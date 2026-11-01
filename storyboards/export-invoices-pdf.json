@@ -1,0 +1,36 @@
+{
+  "id": "export-invoices-pdf",
+  "title": "Download your invoices as PDFs",
+  "description": "Shows how to export invoices from this quarter as PDF files, one per invoice.",
+  "answersQuestions": ["How do I download invoices as PDF?", "Can I get a PDF of each invoice?"],
+  "tags": { "area": "billing", "role": "admin", "platform": "web" },
+  "startUrl": "/#/dashboard",
+  "scenes": [
+    {
+      "chapter": "Open your invoices",
+      "narration": "Open Billing from the menu, then select the Invoices tab.",
+      "steps": [
+        { "do": "click", "target": { "role": "link", "name": "Billing" }, "zoom": true },
+        { "do": "click", "target": { "role": "tab", "name": "Invoices" }, "zoom": true },
+        { "do": "expect", "target": { "testId": "invoice-table" } }
+      ]
+    },
+    {
+      "chapter": "Choose PDF",
+      "narration": "Click Export, pick This quarter, and choose PDF to get one file per invoice.",
+      "steps": [
+        { "do": "click", "target": { "testId": "export-button" }, "zoom": true },
+        { "do": "select", "target": { "label": "Date range" }, "value": "This quarter" },
+        { "do": "click", "target": { "role": "radio", "name": "PDF (one file per invoice)" }, "zoom": true }
+      ]
+    },
+    {
+      "chapter": "Download",
+      "narration": "Click Download export. A message confirms when your files are ready.",
+      "steps": [
+        { "do": "click", "target": { "role": "button", "name": "Download export" }, "zoom": true },
+        { "do": "expect", "target": { "text": "Export ready" } }
+      ]
+    }
+  ]
+}

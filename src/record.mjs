@@ -3,23 +3,12 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { locate, perform, performPageStep } from './locate.mjs';
 
 // Screencast frames match the page's CSS size, so record at 1280x720; compose upscales to 1080p.
 const VIEWPORT = { width: 1280, height: 720 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// Finds the element, and gives it a plain-English name so the on-screen action label
-// reads "Click Billing" instead of the raw locator code.
-function locate(page, t, label) {
-  let loc;
-  if (t.role) loc = page.getByRole(t.role, { name: t.name, exact: true });
-  else if (t.testId) loc = page.getByTestId(t.testId);
-  else if (t.label) loc = page.getByLabel(t.label, { exact: true });
-  else if (t.text) loc = page.getByText(t.text);
-  else throw new Error(`Unsupported target: ${JSON.stringify(t)}`);
-  return loc.describe(label || t.name || t.label || t.text || t.testId);
-}
 
 // Moves the mouse along an eased path over ~0.6 s, so the drawn cursor glides like a person's.
 let pos = { x: 640, y: 360 };
@@ -58,7 +47,7 @@ export async function record({ storyboard, baseUrl, outDir }) {
       await page.screencast.showChapter(`Step ${i + 1}: ${scene.chapter}`, { duration: 1500 });
       await sleep(1600);
       for (const step of scene.steps) {
-        if (step.do === 'pause') { await sleep(step.ms); continue; }
+        if (await performPageStep(page, step)) { await sleep(400); continue; }
         const loc = locate(page, step.target, step.label);
         await loc.waitFor({ state: 'visible', timeout: 10_000 });
         if (step.do === 'expect') continue; // proves the step reached the right screen
@@ -67,11 +56,7 @@ export async function record({ storyboard, baseUrl, outDir }) {
         await glide(page, box.x + box.width / 2, box.y + box.height / 2);
         await sleep(300);
         const aStart = now();
-        if (step.do === 'click') await loc.click();
-        else if (step.do === 'fill' && step.value === '') await loc.fill('');
-        else if (step.do === 'fill') { await loc.click(); await loc.pressSequentially(step.value, { delay: 90 }); }
-        else if (step.do === 'select') await loc.selectOption({ label: step.value });
-        else throw new Error(`Unsupported step: ${step.do}`);
+        await perform(page, loc, step);
         timeline.actions.push({
           scene: i, do: step.do, zoom: !!step.zoom, start: aStart, end: now() + 900,
           box: { x: box.x, y: box.y, w: box.width, h: box.height },

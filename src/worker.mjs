@@ -3,6 +3,7 @@
 // background worker; in the demo, src/server.mjs runs it inside the web service.
 import { getDb, ensureIndexes, closeDb } from './store.mjs';
 import { makeVideo } from './pipeline.mjs';
+import { authorStoryboard } from './author.mjs';
 import { startDemoApp } from './demo-server.mjs';
 
 const POLL_MS = 3000;
@@ -36,13 +37,28 @@ export async function startWorker() {
       if (!job) { await sleep(POLL_MS); continue; }
 
       const log = (msg) => console.log(`[job ${job._id}] ${msg}`);
-      log(`started: ${job.storyboard.title}`);
+      log(`started: ${job.storyboard?.title || job.prompt}`);
       try {
-        const saved = await makeVideo({ storyboard: job.storyboard, baseUrl, jobId: job._id, log });
-        await jobs.updateOne({ _id: job._id }, { $set: { status: 'done', finishedAt: new Date(), result: saved } });
+        let storyboard = job.storyboard;
+        // Prompt jobs: Claude plans the storyboard first (skipped on retry if already planned).
+        if (job.type === 'prompt' && !storyboard) {
+          await jobs.updateOne({ _id: job._id }, { $set: { stage: 'planning' } });
+          const plan = await authorStoryboard({ prompt: job.prompt, startUrl: job.startUrl, baseUrl, log });
+          storyboard = plan.storyboard;
+          await jobs.updateOne({ _id: job._id }, { $set: { storyboard, planUsage: plan.usage } });
+          if (job.planOnly) {
+            await jobs.updateOne({ _id: job._id }, { $set: { status: 'planned', stage: null, finishedAt: new Date() } });
+            log('planned (not recording)');
+            continue;
+          }
+        }
+        await jobs.updateOne({ _id: job._id }, { $set: { stage: 'recording' } });
+        const saved = await makeVideo({ storyboard, baseUrl, jobId: job._id, log });
+        await jobs.updateOne({ _id: job._id }, { $set: { status: 'done', stage: null, finishedAt: new Date(), result: saved } });
         log('done');
       } catch (err) {
-        const retry = job.attempts < 2;
+        // Don't retry when Claude was blocked (CAPTCHA, login wall) or the key is missing.
+        const retry = job.attempts < 2 && !/Claude stopped|OPENROUTER_API_KEY|did not find any steps/.test(err.message);
         await jobs.updateOne({ _id: job._id }, { $set: { status: retry ? 'queued' : 'failed', error: err.message.slice(0, 2000) } });
         log(`failed (${retry ? 'will retry' : 'giving up'}): ${err.message.split('\n')[0]}`);
       }

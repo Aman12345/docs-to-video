@@ -1,0 +1,26 @@
+{
+  "id": "wikipedia-search",
+  "title": "Search Wikipedia and open an article",
+  "description": "A public-website example: search Wikipedia for a topic and open its article. Uses a full web address in startUrl, so it ignores the sample app.",
+  "answersQuestions": ["How do I search Wikipedia?", "How do I find an article on Wikipedia?"],
+  "tags": { "area": "example", "platform": "web" },
+  "startUrl": "https://en.wikipedia.org/wiki/Main_Page",
+  "scenes": [
+    {
+      "chapter": "Search for a topic",
+      "narration": "Type a topic into the search box at the top of the page, then click Search.",
+      "steps": [
+        { "do": "fill", "target": { "role": "searchbox", "name": "Search Wikipedia" }, "value": "Ada Lovelace", "zoom": true },
+        { "do": "click", "target": { "role": "button", "name": "Search" }, "zoom": true },
+        { "do": "expect", "target": { "role": "heading", "name": "Ada Lovelace" } }
+      ]
+    },
+    {
+      "chapter": "Read the article",
+      "narration": "The article opens with a short summary, followed by sections you can jump to from the contents list.",
+      "steps": [
+        { "do": "pause", "ms": 2500 }
+      ]
+    }
+  ]
+}

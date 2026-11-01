@@ -136,7 +136,10 @@
   document.getElementById('confirmExport').onclick = () => {
     document.getElementById('exportModal').classList.remove('open');
     const t = document.getElementById('toast');
-    t.textContent = 'Export ready: invoices-last-30-days.csv'; t.classList.add('show');
+    const range = document.getElementById('range').value.toLowerCase().replace(/ /g, '-');
+    const fmt = document.querySelector('input[name=fmt]:checked').value;
+    t.textContent = fmt === 'pdf' ? `Export ready: invoices-${range}.zip (PDFs)` : `Export ready: invoices-${range}.csv`;
+    t.classList.add('show');
   };
   window.addEventListener('hashchange', render); render();
 </script>

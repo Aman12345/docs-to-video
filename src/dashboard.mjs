@@ -3,6 +3,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ObjectId } from 'mongodb';
 
 const SB_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'storyboards');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -41,8 +42,9 @@ function page({ sbs, jobs, videos, busy, error }) {
 *{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:var(--bg)}
 main{max-width:1040px;margin:0 auto;padding:28px 16px 60px}h1{font-size:26px;margin:0 0 4px}h2{font-size:18px;margin:32px 0 12px}
 .sub{color:var(--muted);margin:0 0 20px}.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px}
-select,textarea{font:inherit;width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:#fff}
-textarea{font-family:ui-monospace,monospace;font-size:13px;min-height:110px}
+select,textarea,input[type=text]{font:inherit;width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:#fff}
+textarea{font-family:ui-monospace,monospace;font-size:13px;min-height:110px}textarea.plain{font-family:inherit;font-size:15px;min-height:72px}
+label{display:block;margin-bottom:6px}label.inline{display:flex;gap:6px;align-items:center;margin:0}.pill.planned{background:#f4f3ff;color:#5925dc}
 .row{display:flex;gap:12px;align-items:end;flex-wrap:wrap}.row>div{flex:1;min-width:240px}
 button{font:inherit;padding:9px 18px;border-radius:8px;border:1px solid var(--brand);background:var(--brand);color:#fff;font-weight:600;cursor:pointer}
 button.ghost{background:#fff;color:var(--brand)}details{margin-top:14px}summary{cursor:pointer;color:var(--muted)}
@@ -56,10 +58,19 @@ a.btn{display:inline-block;padding:7px 14px;border-radius:8px;border:1px solid v
 .err{background:#fef3f2;border:1px solid #fecdca;color:#b42318;padding:10px 14px;border-radius:8px;margin-bottom:14px}
 .empty{color:var(--muted)}
 </style></head><body><main>
-<h1>Docs to Video</h1><p class="sub">Pick a storyboard and make a narrated how-to video. Recording runs here on Render in headless Chrome; videos are stored in MongoDB.</p>
+<h1>Docs to Video</h1><p class="sub">Describe a how-to video, or pick a ready-made storyboard. Claude plans the steps, Playwright records them in headless Chrome on Render, and videos are stored in MongoDB.</p>
 ${error ? `<div class="err">${esc(error)}</div>` : ''}
+<div class="card" style="margin-bottom:16px"><form method="post" action="/ui/prompt">
+<label for="prompt"><strong>Describe the video</strong></label>
+<textarea id="prompt" name="prompt" class="plain" required placeholder="e.g. Search Wikipedia for Ada Lovelace and open her article"></textarea>
+<div class="row" style="margin-top:12px"><div><label for="start"><strong>Start at</strong> <span class="meta">website address; leave empty to use the sample billing app</span></label>
+<input id="start" name="startUrl" type="text" inputmode="url" autocomplete="off" placeholder="en.wikipedia.org"></div>
+<div style="flex:0;white-space:nowrap;padding-bottom:9px"><label class="inline meta"><input type="checkbox" name="planOnly" value="1"> Plan only</label></div>
+<div style="flex:0"><button type="submit">Plan and record</button></div></div>
+<p class="meta">Claude works out the clicks on the real site, then the video is recorded. Takes about 2–4 minutes. Sites that need a login or show a robot check won't work, and it never types passwords or completes purchases.</p>
+</form></div>
 <div class="card"><form method="post" action="/ui/make"><div class="row"><div>
-<label for="sb"><strong>Storyboard</strong></label>
+<label for="sb"><strong>Or pick a ready-made storyboard</strong></label>
 <select id="sb" name="file">${sbs.map((s) => `<option value="${esc(s.file)}">${esc(s.title)} (${s.scenes.length} steps)</option>`).join('')}</select></div>
 <div style="flex:0"><button type="submit">Make video</button></div></div>
 <details><summary>Or paste your own storyboard (JSON)</summary><textarea name="custom" placeholder='{"id":"my-video","title":"...","startUrl":"/#/dashboard","scenes":[...]}'></textarea>
@@ -68,8 +79,15 @@ ${error ? `<div class="err">${esc(error)}</div>` : ''}
 
 <h2>Jobs</h2>
 ${jobs.length ? `<table><thead><tr><th>Video</th><th>Status</th><th>Queued</th><th>Result</th></tr></thead><tbody>
-${jobs.map((j) => `<tr><td>${esc(j.storyboard?.title)}</td><td>${statusPill(j.status)}</td><td class="meta">${ago(j.createdAt)}</td>
-<td class="meta">${j.status === 'done' ? `v${j.result?.version}, ${(j.result?.sizeBytes / 1e6).toFixed(1)} MB` : j.status === 'failed' ? esc((j.error || '').split('\n')[0].slice(0, 140)) : j.status === 'running' ? 'recording...' : ''}</td></tr>`).join('')}
+${jobs.map((j) => {
+  const cost = j.planUsage ? ` &middot; planning $${j.planUsage.costUsd.toFixed(2)}` : '';
+  const steps = j.storyboard && j.type === 'prompt' ? ` &middot; <a href="/ui/jobs/${j._id}/storyboard">view steps</a>` : '';
+  const result = j.status === 'done' ? `v${j.result?.version}, ${(j.result?.sizeBytes / 1e6).toFixed(1)} MB${cost}${steps}`
+    : j.status === 'planned' ? `planned${cost}${steps} <form method="post" action="/ui/record/${j._id}" style="display:inline"><button class="ghost" style="padding:3px 10px;margin-left:6px">Record it</button></form>`
+    : j.status === 'failed' ? esc((j.error || '').split('\n')[0].slice(0, 160))
+    : j.status === 'running' ? `${j.stage === 'planning' ? 'Claude is planning the steps...' : 'recording...'}` : '';
+  return `<tr><td>${esc(j.storyboard?.title || j.prompt)}${j.type === 'prompt' ? ' <span class="meta">(from prompt)</span>' : ''}</td><td>${statusPill(j.status)}</td><td class="meta">${ago(j.createdAt)}</td><td class="meta">${result}</td></tr>`;
+}).join('')}
 </tbody></table>` : '<p class="empty">No jobs yet.</p>'}
 
 <h2>Video library</h2>
@@ -101,6 +119,29 @@ export async function handleDashboard(db, req, res, url) {
     await db.collection('jobs').insertOne({ status: 'queued', storyboard, attempts: 0, createdAt: new Date(), source: 'dashboard' });
     return redirect(res);
   }
+  if (req.method === 'POST' && p === '/ui/prompt') {
+    const form = await readForm(req);
+    const prompt = (form.prompt || '').trim().slice(0, 1000);
+    if (!prompt) return redirect(res, `/?error=${encodeURIComponent('Describe the video you want first.')}`);
+    let startUrl = (form.startUrl || '').trim();
+    if (startUrl && !/^https?:\/\//i.test(startUrl)) startUrl = `https://${startUrl}`;
+    await db.collection('jobs').insertOne({
+      type: 'prompt', status: 'queued', prompt, startUrl: startUrl || '/#/dashboard',
+      planOnly: form.planOnly === '1', attempts: 0, createdAt: new Date(), source: 'dashboard',
+    });
+    return redirect(res);
+  }
+  if (req.method === 'POST' && p.startsWith('/ui/record/')) {
+    const planned = await db.collection('jobs').findOne({ _id: new ObjectId(p.split('/')[3]) });
+    if (!planned?.storyboard) return redirect(res, `/?error=${encodeURIComponent('That plan was not found.')}`);
+    await db.collection('jobs').insertOne({ status: 'queued', storyboard: planned.storyboard, attempts: 0, createdAt: new Date(), source: 'dashboard' });
+    return redirect(res);
+  }
+  if (req.method === 'GET' && p.startsWith('/ui/jobs/') && p.endsWith('/storyboard')) {
+    const job = await db.collection('jobs').findOne({ _id: new ObjectId(p.split('/')[3]) });
+    res.writeHead(job?.storyboard ? 200 : 404, { 'Content-Type': 'application/json' }).end(JSON.stringify(job?.storyboard || { error: 'not found' }, null, 2));
+    return true;
+  }
   if (req.method === 'POST' && p.startsWith('/ui/approve/')) {
     await db.collection('videos').updateOne({ slug: decodeURIComponent(p.split('/')[3]) }, { $set: { status: 'approved', approvedAt: new Date() } });
     return redirect(res);
@@ -112,6 +153,8 @@ export async function handleDashboard(db, req, res, url) {
       db.collection('videos').find({}).sort({ updatedAt: -1 }).limit(24).toArray(),
     ]);
     const busy = jobs.some((j) => j.status === 'queued' || j.status === 'running');
+    // The list query leaves out full storyboards; the steps link only needs to know one exists.
+    jobs.forEach((j) => { if (j.storyboard) j.storyboard = { title: j.storyboard.title }; });
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(page({ sbs, jobs, videos, busy, error: url.searchParams.get('error') }));
     return true;
   }

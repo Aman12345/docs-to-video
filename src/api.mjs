@@ -66,6 +66,17 @@ const server = http.createServer(async (req, res) => {
       const { insertedId } = await db.collection('jobs').insertOne({ status: 'queued', storyboard, attempts: 0, createdAt: new Date() });
       return json(res, 202, { jobId: insertedId, status: 'queued' });
     }
+    // Describe a video in plain English; Claude plans the storyboard, then it's recorded.
+    if (req.method === 'POST' && url.pathname === '/prompts') {
+      if (!authed) return json(res, 401, { error: 'unauthorized' });
+      const { prompt, startUrl, planOnly } = await readBody(req);
+      if (!prompt?.trim()) return json(res, 400, { error: 'prompt required' });
+      const { insertedId } = await db.collection('jobs').insertOne({
+        type: 'prompt', status: 'queued', prompt: prompt.trim().slice(0, 1000), startUrl: startUrl || '/#/dashboard',
+        planOnly: !!planOnly, attempts: 0, createdAt: new Date(), source: 'api',
+      });
+      return json(res, 202, { jobId: insertedId, status: 'queued' });
+    }
     if (req.method === 'GET' && parts[0] === 'jobs' && parts[1]) {
       const job = await db.collection('jobs').findOne({ _id: new ObjectId(parts[1]) }, { projection: { storyboard: 0 } });
       return job ? json(res, 200, job) : json(res, 404, { error: 'job not found' });
