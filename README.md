@@ -127,6 +127,15 @@ Pick a voice per video in the dashboard (both request forms, and next to Re-reco
 the video, so re-recording keeps it. The default is whatever TTS_MODEL / TTS_VOICE are set to. If a voice
 fails, the video falls back to the default voice instead of losing narration. Voices are listed in src/voices.mjs.
 
+### Test on Google Cloud Run
+
+`cloudrun/` sets up the same worker as a Cloud Run job: each video gets its own 4-CPU machine that shuts
+down when the video is saved. Set it up once from Google Cloud Shell (`bash cloudrun/setup.sh`, see
+cloudrun/README.md), pick "Google Cloud Run (test)" under Settings → Where videos record, then start
+machines with `bash cloudrun/run.sh [how many]`. Workers only take jobs from their own pool
+(`WORKER_POOL`), so Render and Cloud Run never take the same job. `RUN_ONCE=1` makes a worker record one
+video and exit.
+
 ### Settings page
 
 `/ui/settings` (linked from the dashboard) changes the AI and voice defaults without a redeploy: planning

@@ -1,6 +1,6 @@
 // video-api: the one front door for Slack, the support agent and client share links.
 // Runs as a Render web service. Videos stream straight out of MongoDB GridFS.
-import { loadSettings } from './settings.mjs';
+import { loadSettings, poolForNewJob } from './settings.mjs';
 import { isVoice } from './voices.mjs';
 import http from 'node:http';
 import { ObjectId } from 'mongodb';
@@ -89,7 +89,7 @@ const server = http.createServer(async (req, res) => {
       if (!authed) return json(res, 401, { error: 'unauthorized' });
       const { storyboard, voice } = await readBody(req);
       if (!storyboard?.id || !Array.isArray(storyboard.scenes)) return json(res, 400, { error: 'storyboard with id and scenes required' });
-      const { insertedId } = await db.collection('jobs').insertOne({ status: 'queued', storyboard, attempts: 0, createdAt: new Date(), ...(isVoice(voice) ? { voice } : {}) });
+      const { insertedId } = await db.collection('jobs').insertOne({ status: 'queued', storyboard, attempts: 0, createdAt: new Date(), ...(isVoice(voice) ? { voice } : {}), ...poolForNewJob() });
       return json(res, 202, { jobId: insertedId, status: 'queued' });
     }
     // Describe a video in plain English; Claude plans the storyboard, then it's recorded.
@@ -99,7 +99,7 @@ const server = http.createServer(async (req, res) => {
       if (!prompt?.trim()) return json(res, 400, { error: 'prompt required' });
       const { insertedId } = await db.collection('jobs').insertOne({
         type: 'prompt', status: 'queued', prompt: prompt.trim().slice(0, 1000), startUrl: startUrl || '/#/dashboard',
-        planOnly: !!planOnly, attempts: 0, createdAt: new Date(), source: 'api', ...(isVoice(voice) ? { voice } : {}),
+        planOnly: !!planOnly, attempts: 0, createdAt: new Date(), source: 'api', ...(isVoice(voice) ? { voice } : {}), ...poolForNewJob(),
       });
       return json(res, 202, { jobId: insertedId, status: 'queued' });
     }

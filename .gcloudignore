@@ -1,0 +1,5 @@
+# What Cloud Build uploads (gcloud builds submit). Secrets and local files stay out.
+.git
+node_modules
+out
+cloudrun/env.yaml

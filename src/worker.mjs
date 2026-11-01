@@ -13,6 +13,11 @@ const STALE_MS = 30 * 60 * 1000; // a job "running" this long belonged to a work
 const HEARTBEAT_MS = 15 * 1000;
 const HEARTBEAT_STALE_MS = 2 * 60 * 1000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// WORKER_POOL: only take jobs from this pool (e.g. "cloudrun"); without it, only jobs with no pool (Render).
+// RUN_ONCE: take one job, then exit (Cloud Run jobs: each task records one video and stops; nothing runs idle).
+const POOL = process.env.WORKER_POOL || null;
+const RUN_ONCE = /^(1|true|yes|on)$/i.test(process.env.RUN_ONCE || '');
+const ONCE_WAIT_MS = 60 * 1000; // a run-once worker waits this long for a job before giving up
 
 // What each video cost, so the dashboard shows real numbers, not estimates.
 // Prices (Nov 2026): OpenRouter voice $13 per million characters; Render 1 CPU / 2 GB server $25/month
@@ -35,9 +40,11 @@ export async function startWorker() {
   let demo;
   if (!process.env.APP_URL) demo = await startDemoApp(4173);
   const baseUrl = process.env.APP_URL || demo.url;
-  console.log(`video-worker ready; recording against ${baseUrl}`);
+  console.log(`video-worker ready; recording against ${baseUrl}${POOL ? ` (pool: ${POOL})` : ''}${RUN_ONCE ? ', one job then exit' : ''}`);
 
   const state = { stopping: false, current: null };
+  const bootAt = Date.now();
+  let handled = null; // RUN_ONCE: the one job this process records
   const loop = (async () => {
     while (!state.stopping) {
       // Jobs whose worker stopped checking in (server restarted or crashed) go back to the queue.
@@ -53,11 +60,17 @@ export async function startWorker() {
       );
       // Atomically claim the oldest queued job, so two workers never take the same one.
       const job = await jobs.findOneAndUpdate(
-        { status: 'queued' },
+        { status: 'queued', pool: POOL }, // pool: null also matches jobs that have no pool
         { $set: { status: 'running', startedAt: new Date() }, $inc: { attempts: 1 } },
         { sort: { createdAt: 1 }, returnDocument: 'after' },
       );
-      if (!job) { await sleep(POLL_MS); continue; }
+      if (!job) {
+        if (RUN_ONCE && (handled || Date.now() - bootAt > ONCE_WAIT_MS)) break;
+        await sleep(POLL_MS); continue;
+      }
+      // One video per run-once worker, but its own retry (after a failed first attempt) stays here.
+      if (RUN_ONCE && handled && !job._id.equals(handled)) { await jobs.updateOne({ _id: job._id }, { $set: { status: 'queued' }, $inc: { attempts: -1 } }); break; }
+      handled = job._id;
       await loadSettings(db); // pick up changes from the Settings page
 
       state.current = job._id;
@@ -137,11 +150,12 @@ export async function startWorker() {
       $push: { events: { $each: [{ at: new Date(), msg: 'Paused for a server update (handed back to the queue; restarts from the beginning in a few seconds).' }], $slice: -300 } } });
     console.log(`[job ${state.current}] handed back to the queue (server restarting)`);
   };
-  return { stop: async () => { state.stopping = true; await loop; }, handBack };
+  return { stop: async () => { state.stopping = true; await loop; }, handBack, done: loop };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const worker = await startWorker();
+  if (RUN_ONCE) worker.done.then(async () => { await closeDb(); process.exit(0); });
   process.on('SIGTERM', async () => {
     console.log('SIGTERM: handing the current job back to the queue, then exiting');
     await worker.handBack();

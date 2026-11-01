@@ -1,7 +1,7 @@
 // A small web page for the demo: pick a storyboard, click "Make video", watch the job,
 // play and approve the result. Protected with a password when DEMO_PASSWORD is set.
 import { authorModel, repairModel, chat, parseJson, newUsage } from './ai.mjs';
-import { SETTINGS, setting, saveSettings } from './settings.mjs';
+import { SETTINGS, setting, saveSettings, poolForNewJob } from './settings.mjs';
 import crypto from 'node:crypto';
 import { VOICES, defaultVoice, isVoice, perVideo } from './voices.mjs';
 import fs from 'node:fs/promises';
@@ -56,7 +56,7 @@ export async function queueRerecords(db, filter = {}, source = 'rerecord', voice
   const todo = vids.filter((v) => !busy.has(v.slug));
   if (todo.length) {
     await db.collection('jobs').insertMany(todo.map((v, i) => ({
-      status: 'queued', storyboard: v.storyboard, rerecordOf: v.slug, attempts: 0, createdAt: new Date(Date.now() + i), source, ...(voice ? { voice } : {}),
+      status: 'queued', storyboard: v.storyboard, rerecordOf: v.slug, attempts: 0, createdAt: new Date(Date.now() + i), source, ...(voice ? { voice } : {}), ...poolForNewJob(),
     })));
   }
   return todo.length;
@@ -178,6 +178,10 @@ ${msg ? `<div class="ok">${esc(msg)}</div>` : ''}${err ? `<div class="err">${esc
 <label>Thinking effort (OpenAI GPT models only)</label>${sel('reasoningEffort', [['', `Render / default (${cur.reasoningEffort.from === 'settings' ? 'low' : cur.reasoningEffort.value})`], ['low', 'Low — fastest and cheapest'], ['medium', 'Medium'], ['high', 'High — slowest, for tricky screens']], val('reasoningEffort'))}
 <span class="price">${note('reasoningEffort')}</span>
 </section>
+<section class="card"><h2>Where videos record</h2>
+<label>New videos and re-records run on</label>${sel('recordOn', [['', 'Render (this server)'], ['cloudrun', 'Google Cloud Run (test)']], val('recordOn'))}
+<span class="price">For Google Cloud Run, set it up once in Cloud Shell (see cloudrun/README.md in the repo), then start each batch with <code>bash cloudrun/run.sh</code>. Jobs wait in the queue until then. Jobs already queued stay where they are.</span>
+</section>
 <section class="card"><h2>Voice</h2>
 <label>Default voice for new videos</label>${sel('voice', [['', 'Render setting (TTS_MODEL / TTS_VOICE)'], ...VOICES.map((o) => [o.id, `${o.label} · ${perVideo(o)}`])], val('voice'))}
 <span class="price">Preselected in the request forms; you can still pick another voice per video. In use: <strong>${esc(defaultVoice().label)}</strong>. <a href="/ui/voices">Listen to the voices</a></span>
@@ -264,8 +268,9 @@ ${jobs.map((j) => {
       ? '<span class="meta" style="margin-left:6px">This site blocks automated browsers, so retrying won\'t help. Try a different site.</span>'
       : `<form method="post" action="/ui/retry/${j._id}" style="display:inline"><button class="ghost" style="padding:3px 10px;margin-left:6px">Retry</button></form>`}`
     : j.status === 'running' ? `${esc(friendly(j.lastEvent) || (j.stage === 'planning' ? 'The AI is planning the steps...' : 'recording...'))}`
+    : j.status === 'queued' && j.pool === 'cloudrun' ? 'Waiting for Google Cloud Run: start the job in Cloud Shell (bash cloudrun/run.sh)'
     : j.status === 'queued' && j.lastEvent ? esc(friendly(j.lastEvent)) : '';
-  return `<tr><td>${esc(j.storyboard?.title || j.prompt)}${j.type === 'prompt' ? ' <span class="meta">(from prompt)</span>' : ''}</td><td>${statusPill(j.status)}</td><td class="meta">${ago(j.createdAt)}</td><td class="meta">${result} <a href="/ui/jobs/${j._id}" style="white-space:nowrap">activity</a></td></tr>`;
+  return `<tr><td>${esc(j.storyboard?.title || j.prompt)}${j.type === 'prompt' ? ' <span class="meta">(from prompt)</span>' : ''}${j.pool === 'cloudrun' ? ' <span class="meta">(Google Cloud Run)</span>' : ''}</td><td>${statusPill(j.status)}</td><td class="meta">${ago(j.createdAt)}</td><td class="meta">${result} <a href="/ui/jobs/${j._id}" style="white-space:nowrap">activity</a></td></tr>`;
 }).join('')}
 </tbody></table>` : '<p class="empty">No jobs yet.</p>'}
 
@@ -377,7 +382,7 @@ export async function handleDashboard(db, req, res, url) {
     } catch (e) {
       return redirect(res, `/?error=${encodeURIComponent(`Could not read storyboard: ${e.message}`)}`);
     }
-    await db.collection('jobs').insertOne({ status: 'queued', storyboard, attempts: 0, createdAt: new Date(), source: 'dashboard', ...pickVoice(form) });
+    await db.collection('jobs').insertOne({ status: 'queued', storyboard, attempts: 0, createdAt: new Date(), source: 'dashboard', ...pickVoice(form), ...poolForNewJob() });
     return redirect(res);
   }
   if (req.method === 'POST' && p === '/ui/prompt') {
@@ -392,14 +397,14 @@ export async function handleDashboard(db, req, res, url) {
     if (startUrl && !/^https?:\/\//i.test(startUrl)) startUrl = `https://${startUrl}`;
     await db.collection('jobs').insertOne({
       type: 'prompt', status: 'queued', prompt, startUrl: startUrl || '/#/dashboard', ...(login ? { login } : {}),
-      planOnly: form.planOnly === '1', attempts: 0, createdAt: new Date(), source: 'dashboard', ...pickVoice(form),
+      planOnly: form.planOnly === '1', attempts: 0, createdAt: new Date(), source: 'dashboard', ...pickVoice(form), ...poolForNewJob(),
     });
     return redirect(res);
   }
   if (req.method === 'POST' && p.startsWith('/ui/record/')) {
     const planned = await db.collection('jobs').findOne({ _id: new ObjectId(p.split('/')[3]) });
     if (!planned?.storyboard) return redirect(res, `/?error=${encodeURIComponent('That plan was not found.')}`);
-    await db.collection('jobs').insertOne({ status: 'queued', storyboard: planned.storyboard, attempts: 0, createdAt: new Date(), source: 'dashboard' });
+    await db.collection('jobs').insertOne({ status: 'queued', storyboard: planned.storyboard, attempts: 0, createdAt: new Date(), source: 'dashboard', ...poolForNewJob() });
     return redirect(res);
   }
   if (req.method === 'POST' && p.startsWith('/ui/retry/')) {
