@@ -4,10 +4,12 @@
 // finished storyboard only contains steps that worked. Recording happens afterwards as a
 // clean, deterministic replay of those steps.
 import { chromium } from 'playwright';
+// Keep the browser alive when the server is asked to stop, so the worker decides what happens to the job.
+const LAUNCH = { handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false };
 import { locate, perform, performPageStep } from './locate.mjs';
 
 const MODEL = process.env.AUTHOR_MODEL || 'anthropic/claude-opus-5.5';
-const MAX_ACTIONS = 14;
+const MAX_ACTIONS = 22; // Miter AI flows need room: popups, navigation, form, chat, approve, waits
 const MAX_ERRORS = 4;
 const SNAPSHOT_CHARS = 14000;
 
@@ -96,7 +98,7 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
   const history = [];
   let errors = 0;
 
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(LAUNCH);
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, ...(storageState ? { storageState } : {}) });
   const page = await context.newPage();
   const system = SYSTEM + (storageState ? SIGNED_IN_RULES : '');
@@ -118,6 +120,9 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
       if (reply.do === 'fail') throw new Error(`Claude stopped: ${reply.why || 'blocked'}`);
 
       const step = { do: reply.do, target: reply.target, value: reply.value, key: reply.key, url: reply.url, text: reply.text, seconds: reply.seconds, narration: reply.narration };
+      // Claude sometimes puts the wait text in "target"; treat it as the text to wait for.
+      if (step.do === 'wait' && !step.text && step.target?.text) { step.text = step.target.text; delete step.target; }
+      if (step.do === 'wait') delete step.target;
       try {
         if (!(await performPageStep(page, step))) {
           if (!step.target) throw new Error('No target given for this action.');
@@ -139,6 +144,9 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
       }
     }
     if (!actions.length) throw new Error('Claude did not find any steps to perform.');
+  } catch (e) {
+    e.screenshot = await page.screenshot({ type: 'jpeg', quality: 70 }).catch(() => null);
+    throw e;
   } finally {
     await browser.close();
   }

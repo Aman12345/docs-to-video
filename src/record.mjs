@@ -1,6 +1,8 @@
 // Replays a storyboard in headless Chromium and records it with Playwright's screencast API.
 // No LLM is involved here: the storyboard is a fixed list of steps, so the replay is repeatable.
 import { chromium } from 'playwright';
+// Keep the browser alive when the server is asked to stop, so the worker decides what happens to the job.
+const LAUNCH = { handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false };
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { locate, perform, performPageStep } from './locate.mjs';
@@ -30,7 +32,7 @@ const sceneMinMs = (text, voiceMs = 0) => Math.max(3500, (text.split(/\s+/).leng
 export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs = [], storageState }) {
   await fs.mkdir(outDir, { recursive: true });
   const videoPath = path.join(outDir, 'raw.webm');
-  const browser = await chromium.launch(); // headless; Render has no display
+  const browser = await chromium.launch(LAUNCH); // headless; Render has no display
   const context = await browser.newContext({ viewport: VIEWPORT, ...(storageState ? { storageState } : {}) });
   await context.addInitScript({ content: `window.__demoBrand = ${JSON.stringify({ primary: brand.primary })};` });
   await context.addInitScript({ path: new URL('./cursor.js', import.meta.url).pathname });
@@ -58,7 +60,7 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
       await sleep(CHAPTER_CARD_MS); // the branded chapter card is overlaid here during compose
       for (const step of scene.steps) {
         const w0 = now();
-        if (await performPageStep(page, step)) {
+        if (await performPageStep(page, step, { waitSlack: 2 })) {
           const w1 = now();
           // Keep ~2 s of the wait at each end so viewers see it working, and trim the middle.
           if (step.do === 'wait' && w1 - w0 > 7000) { timeline.cuts.push({ start: w0 + 2500, end: w1 - 2000 }); skipped += w1 - w0 - 4500; }
@@ -88,9 +90,14 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
       timeline.scenes.push({ chapter: scene.chapter, narration: scene.narration, start, end: now() });
     }
     await sleep(400);
+  } catch (e) {
+    // Keep a picture of the screen at the moment it failed (shown in the dashboard).
+    e.screenshot = await page.screenshot({ type: 'jpeg', quality: 70 }).catch(() => null);
+    e.message = `Recording stopped at "${storyboard.scenes[timeline.scenes.length]?.chapter || 'a step'}" (${page.url()}): ${e.message}`;
+    throw e;
   } finally {
-    await page.screencast.stop();
-    await browser.close();
+    await page.screencast.stop().catch(() => {});
+    await browser.close().catch(() => {});
   }
   await fs.writeFile(path.join(outDir, 'timeline.json'), JSON.stringify(timeline, null, 2));
   return { videoPath, timeline };

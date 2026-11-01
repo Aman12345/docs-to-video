@@ -26,12 +26,13 @@ export async function perform(page, loc, step) {
 }
 
 // Steps that don't act on one element.
-export async function performPageStep(page, step) {
+export async function performPageStep(page, step, { waitSlack = 1 } = {}) {
   if (step.do === 'pause') { await page.waitForTimeout(step.ms || 1000); return true; }
   // Wait for slow work in the app (e.g. Miter AI building a report) until some text shows it's finished.
   if (step.do === 'wait') {
-    const ms = Math.min(Number(step.seconds) || 120, 600) * 1000;
-    if (step.text) await page.getByText(step.text, { exact: false }).first().waitFor({ state: 'visible', timeout: ms });
+    const ms = Math.min((Number(step.seconds) || 120) * waitSlack, 900) * 1000;
+    // Only visible matches count (a hidden copy of the text elsewhere must not block the wait).
+    if (step.text) await page.getByText(step.text, { exact: false }).filter({ visible: true }).first().waitFor({ state: 'visible', timeout: ms });
     else await page.waitForTimeout(ms);
     await page.waitForTimeout(800);
     return true;

@@ -4,6 +4,8 @@
 // No password is ever stored: the person types it into the site directly, and only the session is saved.
 import crypto from 'node:crypto';
 import { chromium } from 'playwright';
+// Keep the browser alive when the server is asked to stop, so the worker decides what happens to the job.
+const LAUNCH = { handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false };
 
 export const VIEWPORT = { width: 1280, height: 720 };
 const IDLE_MS = 10 * 60 * 1000;
@@ -55,7 +57,7 @@ function touch(s) {
 
 export async function startLive(name, url) {
   await closeLive(name);
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(LAUNCH);
   const context = await browser.newContext({ viewport: VIEWPORT });
   const page = await context.newPage();
   const s = { name, url, browser, context, page };

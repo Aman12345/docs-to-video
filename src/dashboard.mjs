@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ObjectId } from 'mongodb';
+import { bucket } from './store.mjs';
 import { narrationOn } from './compose.mjs';
 import { listLogins, startLive, getLive, liveAction, liveShot, saveLive, closeLive, deleteLogin, cleanName, VIEWPORT } from './logins.mjs';
 
@@ -116,7 +117,7 @@ ${jobs.map((j) => {
   const steps = j.storyboard && j.type === 'prompt' ? ` &middot; <a href="/ui/jobs/${j._id}/storyboard">view steps</a>` : '';
   const result = j.status === 'done' ? `v${j.result?.version}, ${(j.result?.sizeBytes / 1e6).toFixed(1)} MB${cost}${steps}`
     : j.status === 'planned' ? `planned${cost}${steps} <form method="post" action="/ui/record/${j._id}" style="display:inline"><button class="ghost" style="padding:3px 10px;margin-left:6px">Record it</button></form>`
-    : j.status === 'failed' ? `${esc((j.error || '').split('\n')[0].slice(0, 160))} ${/^Claude stopped/.test(j.error || '')
+    : j.status === 'failed' ? `${esc((j.error || '').split('\n')[0].slice(0, 220))}${j.failShot ? ` <a href="/ui/jobs/${j._id}/fail.jpg" target="_blank">see the screen</a>` : ''} ${/^Claude stopped/.test(j.error || '')
       // Claude stopped on purpose (robot check, bot block, login wall): retrying would hit the same wall.
       ? '<span class="meta" style="margin-left:6px">This site blocks automated browsers, so retrying won\'t help. Try a different site.</span>'
       : `<form method="post" action="/ui/retry/${j._id}" style="display:inline"><button class="ghost" style="padding:3px 10px;margin-left:6px">Retry</button></form>`}`
@@ -226,6 +227,13 @@ export async function handleDashboard(db, req, res, url) {
       { $set: { status: 'queued', attempts: 0, createdAt: new Date() }, $unset: { error: '', stage: '' } },
     );
     return redirect(res);
+  }
+  if (req.method === 'GET' && p.startsWith('/ui/jobs/') && p.endsWith('/fail.jpg')) {
+    const job = await db.collection('jobs').findOne({ _id: new ObjectId(p.split('/')[3]) }, { projection: { failShot: 1 } });
+    if (!job?.failShot) { res.writeHead(404).end('No screenshot'); return true; }
+    res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=3600' });
+    bucket(db).openDownloadStream(job.failShot).pipe(res);
+    return true;
   }
   if (req.method === 'GET' && p.startsWith('/ui/jobs/') && p.endsWith('/storyboard')) {
     const job = await db.collection('jobs').findOne({ _id: new ObjectId(p.split('/')[3]) });

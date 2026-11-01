@@ -1,7 +1,7 @@
 // video-worker: takes queued jobs from MongoDB one at a time, records the video,
 // and stores the result back in MongoDB. In production it runs as its own Render
 // background worker; in the demo, src/server.mjs runs it inside the web service.
-import { getDb, ensureIndexes, closeDb } from './store.mjs';
+import { getDb, ensureIndexes, closeDb, bucket } from './store.mjs';
 import { makeVideo } from './pipeline.mjs';
 import { authorStoryboard } from './author.mjs';
 import { startDemoApp } from './demo-server.mjs';
@@ -34,7 +34,7 @@ export async function startWorker() {
   const baseUrl = process.env.APP_URL || demo.url;
   console.log(`video-worker ready; recording against ${baseUrl}`);
 
-  const state = { stopping: false };
+  const state = { stopping: false, current: null };
   const loop = (async () => {
     while (!state.stopping) {
       await jobs.updateMany(
@@ -49,6 +49,7 @@ export async function startWorker() {
       );
       if (!job) { await sleep(POLL_MS); continue; }
 
+      state.current = job._id;
       const log = (msg) => console.log(`[job ${job._id}] ${msg}`);
       const jobStart = Date.now();
       log(`started: ${job.storyboard?.title || job.prompt}`);
@@ -67,6 +68,7 @@ export async function startWorker() {
           if (job.planOnly) {
             const cost = costOf({ planUsd: plan.usage.costUsd, serverSec: (Date.now() - jobStart) / 1000 });
             await jobs.updateOne({ _id: job._id }, { $set: { status: 'planned', stage: null, finishedAt: new Date(), cost } });
+            state.current = null;
             log('planned (not recording)');
             continue;
           }
@@ -78,11 +80,21 @@ export async function startWorker() {
         const cost = costOf({ planUsd: fresh?.planUsage?.costUsd || 0, voiceChars: saved.voiceChars, serverSec: (Date.now() - jobStart) / 1000 });
         await jobs.updateOne({ _id: job._id }, { $set: { status: 'done', stage: null, finishedAt: new Date(), result: saved, cost } });
         await db.collection('videos').updateOne({ slug: saved.slug }, { $set: { lastCost: cost } });
+        state.current = null;
         log(`done; cost $${cost.total.toFixed(4)} (Claude planning $${cost.planning.toFixed(4)}, voice $${cost.voice.toFixed(4)} for ${cost.voiceChars} chars, server $${cost.server.toFixed(4)} for ${cost.serverSec}s)`);
       } catch (err) {
+        if (state.stopping) { state.current = null; continue; } // shutting down: the job was handed back already
         // Don't retry when Claude was blocked (CAPTCHA, login wall) or the key is missing.
+        // Save what the screen looked like when it failed, so the dashboard can show it.
+        let failShot;
+        if (err.screenshot) {
+          const up = bucket(db).openUploadStream(`fail-${job._id}.jpg`, { metadata: { contentType: 'image/jpeg', jobId: job._id } });
+          await new Promise((ok) => { up.on('finish', ok); up.on('error', ok); up.end(err.screenshot); });
+          failShot = up.id;
+        }
         const retry = job.attempts < 2 && !/Claude stopped|OPENROUTER_API_KEY|did not find any steps|Saved login/.test(err.message);
-        await jobs.updateOne({ _id: job._id }, { $set: { status: retry ? 'queued' : 'failed', error: err.message.slice(0, 2000) } });
+        await jobs.updateOne({ _id: job._id }, { $set: { status: retry ? 'queued' : 'failed', error: err.message.slice(0, 2000), ...(failShot ? { failShot } : {}) } });
+        state.current = null;
         log(`failed (${retry ? 'will retry' : 'giving up'}): ${err.message.split('\n')[0]}`);
         // A re-record that fails usually means the app changed under the saved steps: flag the video.
         if (!retry && job.rerecordOf) {
@@ -93,14 +105,23 @@ export async function startWorker() {
     demo?.server.close();
   })();
 
-  return { stop: async () => { state.stopping = true; await loop; } };
+  // On a deploy or restart, Render stops this instance after a short grace period, far shorter than a
+  // long Miter AI video. So hand the running job straight back to the queue (without counting it as a
+  // failed attempt); the new instance picks it up within seconds.
+  const handBack = async () => {
+    state.stopping = true;
+    if (!state.current) return;
+    await jobs.updateOne({ _id: state.current, status: 'running' }, { $set: { status: 'queued', stage: null, note: 'restarted after a server update' }, $inc: { attempts: -1 } });
+    console.log(`[job ${state.current}] handed back to the queue (server restarting)`);
+  };
+  return { stop: async () => { state.stopping = true; await loop; }, handBack };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const worker = await startWorker();
   process.on('SIGTERM', async () => {
-    console.log('SIGTERM: finishing current job, then exiting');
-    await worker.stop();
+    console.log('SIGTERM: handing the current job back to the queue, then exiting');
+    await worker.handBack();
     await closeDb();
     process.exit(0);
   });

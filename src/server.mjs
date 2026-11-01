@@ -9,9 +9,9 @@ const server = await startApi();
 const worker = await startWorker();
 
 process.on('SIGTERM', async () => {
-  console.log('SIGTERM: finishing current job, then exiting');
+  console.log('SIGTERM: handing the current job back to the queue, then exiting');
   server.close();
-  await worker.stop();
+  await worker.handBack();
   await closeDb();
   process.exit(0);
 });

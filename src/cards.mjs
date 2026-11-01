@@ -2,6 +2,8 @@
 // intro card, closing card, a title card per chapter, a "Step 2 of 4" label per chapter, and a
 // small logo for the caption band. The composer overlays these on the recording with ffmpeg.
 import { chromium } from 'playwright';
+// Keep the browser alive when the server is asked to stop, so the worker decides what happens to the job.
+const LAUNCH = { handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false };
 import path from 'node:path';
 import { checksFor } from './narrative.mjs';
 
@@ -81,7 +83,7 @@ function bugHtml(brand) {
 }
 
 export async function renderCards({ storyboard, brand, outDir }) {
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(LAUNCH);
   const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
   const shot = async (html, file, transparent) => {
     await page.setContent(html, { waitUntil: 'load' });
