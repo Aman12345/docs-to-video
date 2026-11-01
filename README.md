@@ -137,7 +137,7 @@ with `LOG_QUIET=1`: GitHub's log only says a job started/finished/failed; detail
 
 One-time setup:
 1. GitHub repo → Settings → Secrets and variables → Actions → **New repository secret**, copied from Render:
-   `MONGODB_URI`, `OPENROUTER_API_KEY`, and whichever of `LOGIN_SECRET` / `DEMO_PASSWORD` / `API_KEY` Render has.
+   `MONGO_URI` (Render's name for it; `MONGODB_URI` also works), `OPENROUTER_API_KEY`, and whichever of `LOGIN_SECRET` / `DEMO_PASSWORD` / `API_KEY` Render has.
 2. Let GitHub's machines reach MongoDB, either: Atlas → Network Access → allow `0.0.0.0/0`; or (safer) create
    an Atlas API key with the *Project Network Access Manager* role, add `ATLAS_PUBLIC_KEY` and
    `ATLAS_PRIVATE_KEY` as repo secrets and `ATLAS_PROJECT_ID` as a repo *variable*. Each run then adds

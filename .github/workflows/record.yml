@@ -4,7 +4,7 @@
 # Each machine takes one waiting GitHub job from MongoDB, records it, saves it, and stops.
 #
 # Repo secrets (Settings -> Secrets and variables -> Actions), copied from Render's Environment tab:
-#   MONGODB_URI, OPENROUTER_API_KEY, and whichever of LOGIN_SECRET / DEMO_PASSWORD / API_KEY Render has
+#   MONGO_URI (or MONGODB_URI), OPENROUTER_API_KEY, and whichever of LOGIN_SECRET / DEMO_PASSWORD / API_KEY Render has
 # Optional, so each run lets only its own machine into MongoDB (instead of allowing every address):
 #   ATLAS_PUBLIC_KEY, ATLAS_PRIVATE_KEY (an Atlas API key with "Project Network Access Manager"), and the
 #   repo variable ATLAS_PROJECT_ID. Logs are public on a public repo, so the worker runs with LOG_QUIET:
@@ -46,7 +46,9 @@ jobs:
       image: mcr.microsoft.com/playwright:v1.63.0-noble
       options: --ipc=host
     env:
-      MONGODB_URI: ${{ secrets.MONGODB_URI }}
+      # Render calls it MONGO_URI; either secret name works here.
+      MONGODB_URI: ${{ secrets.MONGODB_URI || secrets.MONGO_URI }}
+      NODE_ENV: production
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       LOGIN_SECRET: ${{ secrets.LOGIN_SECRET }}
       DEMO_PASSWORD: ${{ secrets.DEMO_PASSWORD }}
