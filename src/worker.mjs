@@ -11,6 +11,18 @@ const POLL_MS = 3000;
 const STALE_MS = 30 * 60 * 1000; // a job "running" this long belonged to a worker that died
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// What each video cost, so the dashboard shows real numbers, not estimates.
+// Prices (Nov 2026): OpenRouter voice $13 per million characters; Render 1 CPU / 2 GB server $25/month
+// (charged by the second, so the share used by one job = its seconds x $25 / seconds in a month).
+const VOICE_USD_PER_CHAR = Number(process.env.TTS_USD_PER_MCHAR || 13) / 1e6;
+const SERVER_USD_PER_SEC = Number(process.env.SERVER_USD_PER_MONTH || 25) / (730 * 3600);
+function costOf({ planUsd = 0, voiceChars = 0, serverSec = 0 }) {
+  const c = { planning: planUsd, voice: voiceChars * VOICE_USD_PER_CHAR, server: serverSec * SERVER_USD_PER_SEC };
+  c.total = c.planning + c.voice + c.server;
+  for (const k of Object.keys(c)) c[k] = Math.round(c[k] * 1e5) / 1e5;
+  return { ...c, voiceChars, serverSec: Math.round(serverSec) };
+}
+
 export async function startWorker() {
   const db = await getDb();
   await ensureIndexes(db);
@@ -38,6 +50,7 @@ export async function startWorker() {
       if (!job) { await sleep(POLL_MS); continue; }
 
       const log = (msg) => console.log(`[job ${job._id}] ${msg}`);
+      const jobStart = Date.now();
       log(`started: ${job.storyboard?.title || job.prompt}`);
       try {
         let storyboard = job.storyboard;
@@ -52,15 +65,20 @@ export async function startWorker() {
           if (loginName) storyboard.login = loginName;
           await jobs.updateOne({ _id: job._id }, { $set: { storyboard, planUsage: plan.usage } });
           if (job.planOnly) {
-            await jobs.updateOne({ _id: job._id }, { $set: { status: 'planned', stage: null, finishedAt: new Date() } });
+            const cost = costOf({ planUsd: plan.usage.costUsd, serverSec: (Date.now() - jobStart) / 1000 });
+            await jobs.updateOne({ _id: job._id }, { $set: { status: 'planned', stage: null, finishedAt: new Date(), cost } });
             log('planned (not recording)');
             continue;
           }
         }
         await jobs.updateOne({ _id: job._id }, { $set: { stage: 'recording' } });
         const saved = await makeVideo({ storyboard, baseUrl, jobId: job._id, storageState, log });
-        await jobs.updateOne({ _id: job._id }, { $set: { status: 'done', stage: null, finishedAt: new Date(), result: saved } });
-        log('done');
+        const fresh = await jobs.findOne({ _id: job._id }, { projection: { planUsage: 1 } });
+        // Planning is counted once, on the job that planned it ("Record it" jobs reuse a paid-for plan).
+        const cost = costOf({ planUsd: fresh?.planUsage?.costUsd || 0, voiceChars: saved.voiceChars, serverSec: (Date.now() - jobStart) / 1000 });
+        await jobs.updateOne({ _id: job._id }, { $set: { status: 'done', stage: null, finishedAt: new Date(), result: saved, cost } });
+        await db.collection('videos').updateOne({ slug: saved.slug }, { $set: { lastCost: cost } });
+        log(`done; cost $${cost.total.toFixed(4)} (Claude planning $${cost.planning.toFixed(4)}, voice $${cost.voice.toFixed(4)} for ${cost.voiceChars} chars, server $${cost.server.toFixed(4)} for ${cost.serverSec}s)`);
       } catch (err) {
         // Don't retry when Claude was blocked (CAPTCHA, login wall) or the key is missing.
         const retry = job.attempts < 2 && !/Claude stopped|OPENROUTER_API_KEY|did not find any steps|Saved login/.test(err.message);

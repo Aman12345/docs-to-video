@@ -91,7 +91,9 @@ ${logins.length ? `<div style="flex:0;min-width:200px"><label for="login"><stron
 <h2>Jobs</h2>
 ${jobs.length ? `<table><thead><tr><th>Video</th><th>Status</th><th>Queued</th><th>Result</th></tr></thead><tbody>
 ${jobs.map((j) => {
-  const cost = j.planUsage ? ` &middot; planning $${j.planUsage.costUsd.toFixed(2)}` : '';
+  const c = j.cost;
+  const cost = c ? ` &middot; <span title="Claude planning $${c.planning.toFixed(4)} · voice $${c.voice.toFixed(4)} (${c.voiceChars} characters) · server $${c.server.toFixed(4)} (${c.serverSec}s)">cost $${c.total.toFixed(3)} <span class="meta">(Claude $${c.planning.toFixed(3)} · voice $${c.voice.toFixed(3)} · server $${c.server.toFixed(3)})</span></span>`
+    : j.planUsage ? ` &middot; planning $${j.planUsage.costUsd.toFixed(2)}` : '';
   const steps = j.storyboard && j.type === 'prompt' ? ` &middot; <a href="/ui/jobs/${j._id}/storyboard">view steps</a>` : '';
   const result = j.status === 'done' ? `v${j.result?.version}, ${(j.result?.sizeBytes / 1e6).toFixed(1)} MB${cost}${steps}`
     : j.status === 'planned' ? `planned${cost}${steps} <form method="post" action="/ui/record/${j._id}" style="display:inline"><button class="ghost" style="padding:3px 10px;margin-left:6px">Record it</button></form>`
