@@ -15,7 +15,7 @@ export async function makeVideo({ storyboard, baseUrl, jobId, log = console.log 
     log(`recorded ${timeline.scenes.length} scenes in ${((Date.now() - t) / 1000).toFixed(1)}s`);
     t = Date.now();
     const composed = await compose({ rawPath: videoPath, timeline, outDir: workDir });
-    log(`composed ${composed.durationSec}s video in ${((Date.now() - t) / 1000).toFixed(1)}s (narration: ${composed.narrated ? 'yes' : 'no key, captions only'})`);
+    log(`composed ${composed.durationSec}s video in ${((Date.now() - t) / 1000).toFixed(1)}s (narration: ${composed.narrated ? 'yes' : 'off, captions only'})`);
     const db = await getDb();
     await ensureIndexes(db);
     const saved = await saveVideo(db, { storyboard, composed, jobId });

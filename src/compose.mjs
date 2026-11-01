@@ -42,10 +42,11 @@ function zoomFilter(timeline) {
   return `zoompan=z='${z}':x='${x}':y='${y}':d=1:fps=${FPS}:s=${FRAME.width}x${FRAME.height}`;
 }
 
-// Optional narration through OpenRouter's text-to-speech endpoint (skipped when no key is set).
+// Optional narration through OpenRouter's text-to-speech endpoint. Off unless NARRATION=on,
+// so the OpenRouter key can be used for planning without adding a voiceover.
 async function narrate(timeline, outDir) {
   const key = process.env.OPENROUTER_API_KEY;
-  if (!key) return [];
+  if (!key || !/^(on|true|1|yes)$/i.test(process.env.NARRATION || '')) return [];
   const clips = [];
   for (const [i, s] of timeline.scenes.entries()) {
     const res = await fetch('https://openrouter.ai/api/v1/audio/speech', {
