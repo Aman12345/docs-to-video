@@ -135,6 +135,16 @@ takeover on/off, tries per broken step, thinking effort for OpenAI GPT models, a
 Saved in MongoDB (`settings` collection) and picked up by the next job. An empty box falls back to the
 Render environment variable, then to the built-in default; the page shows which one is in use.
 
+### "Check your work" ending
+
+Every video ends by showing the finished result. The AI (the takeover model, since it reads screenshots)
+looks at the final screen, clears anything covering the result (optional steps such as closing a side
+panel, skipped if not needed next time), picks the element that shows the outcome and writes one line
+about it. The recorder rings that element, zooms in gently if it's small, rests the cursor beside it and
+holds while the line is spoken, under a green "✓ Result" chip. It isn't counted as a step in the intro.
+New videos get it while being planned; older videos get it on their next re-record, and it is then saved
+with their steps, so it's only done once. Turn it off on the Settings page ("Check your work" ending).
+
 ### AI takeover when a step stops working
 
 Re-records replay saved steps with no AI. If a step fails (a renamed or moved button, a new popup, a slow

@@ -39,7 +39,8 @@ const logo = (brand, h, dark) => (brand.logoDark || brand.logo)
   : `<div style="font-weight:800;font-size:${h}px;color:${dark ? '#1A1523' : '#fff'}">${esc(brand.name)}</div>`;
 
 function introHtml(brand, sb, minutesLabel) {
-  const n = sb.scenes.length;
+  const steps = sb.scenes.filter((s) => !s.check); // the "Check your work" ending isn't listed as a step
+  const n = steps.length;
   const row = (sc, i) => `<div style="display:flex;align-items:center;gap:21px;padding:16px 0;${i ? 'border-top:1.5px solid #EFE7F8;' : ''}font-size:28px;font-weight:600">
     <span style="width:45px;height:45px;flex:none;border-radius:50%;background:${brand.primary};color:#fff;display:flex;align-items:center;justify-content:center;font-size:21px;font-weight:700">${i + 1}</span>${esc(sc.chapter)}</div>`;
   return page(`<div style="width:1920px;height:1080px;padding:90px 120px;background:${brand.primary};color:#fff;display:flex;flex-direction:column;justify-content:space-between">
@@ -53,7 +54,7 @@ function introHtml(brand, sb, minutesLabel) {
     </div>
     <div style="flex:1;background:#fff;color:#1A1523;border-radius:30px;padding:42px 48px;display:flex;flex-direction:column">
       <p style="margin:0 0 15px;font-size:20px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${brand.primary}">In this video</p>
-      ${sb.scenes.slice(0, 6).map(row).join('')}
+      ${steps.slice(0, 6).map(row).join('')}
     </div>
   </div>
   <p style="font-size:22px;color:#EADCFB">${esc(minutesLabel)} · Narrated, with captions</p>
@@ -74,7 +75,7 @@ function closingHtml(brand, sb) {
 const chipHtml = (brand, i, n, sc) => page(`<div id="el" style="display:inline-block;padding:16px">
   <div style="display:flex;align-items:center;gap:16px;background:rgba(255,255,255,.96);border:1.5px solid #E3D5F5;border-radius:999px;padding:10px 24px 10px 20px;box-shadow:0 10px 30px rgba(60,20,110,.14)">
     ${logo(brand, 24, true)}<span style="width:1.5px;height:26px;background:#E3D5F5"></span>
-    <span style="background:${brand.primary};color:#fff;border-radius:999px;padding:7px 18px;font-size:20px;font-weight:700">Step ${i + 1} of ${n}</span>
+    <span style="background:${sc.check ? '#067647' : brand.primary};color:#fff;border-radius:999px;padding:7px 18px;font-size:20px;font-weight:700">${sc.check ? '✓ Result' : `Step ${i + 1} of ${n}`}</span>
     <span style="font-size:23px;font-weight:700;color:#1A1523;white-space:nowrap">${esc(sc.chapter)}</span>
   </div></div>`);
 
@@ -106,7 +107,7 @@ export async function renderCards({ storyboard, brand, outDir, estimatedSec = 60
       await pg.screenshot({ path: p });
       return p;
     };
-    const n = storyboard.scenes.length;
+    const n = storyboard.scenes.filter((s) => !s.check).length;
     const cards = {
       intro: await full(introHtml(brand, storyboard, minutesLabel), 'card-intro.png'),
       outro: await full(closingHtml(brand, storyboard), 'card-outro.png'),

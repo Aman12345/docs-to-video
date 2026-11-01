@@ -8,6 +8,8 @@ import { renderCards } from './cards.mjs';
 import { getBrand } from './brand.mjs';
 import { introText, outroText } from './narrative.mjs';
 import { voiceById } from './voices.mjs';
+import { isCheck } from './check.mjs';
+import { get } from './settings.mjs';
 import { getDb, ensureIndexes, saveVideo, closeDb } from './store.mjs';
 import { startDemoApp } from './demo-server.mjs';
 
@@ -34,8 +36,8 @@ export async function makeVideo({ storyboard, baseUrl, jobId, storageState, log 
     const wanted = voiceById(storyboard.voice);
     let clips = await synthesizeVoice(texts, workDir, log, wanted);
     const voiced = clips.length === texts.length;
-    const voice = voiced ? clips.slice(1, -1) : [];
-    if (voiced) log(`voiceover (${clips.voice?.label || 'test tone'}): ${clips.length} clips (intro, ${voice.length} steps, outro) in ${secs(t)}s`);
+    const sceneVoiceMs = () => (voiced ? clips.slice(1, -1).map((v) => v.ms) : []);
+    if (voiced) log(`voiceover (${clips.voice?.label || 'test tone'}): ${clips.length} clips (intro, ${clips.length - 2} steps, outro) in ${secs(t)}s`);
     timings.voiceSec = +secs(t);
     let voiceChars = voiced ? texts.reduce((n, x) => n + x.length, 0) : 0;
     let aiUsd = 0;
@@ -44,7 +46,13 @@ export async function makeVideo({ storyboard, baseUrl, jobId, storageState, log 
       const t1 = Date.now();
       let r;
       try {
-        r = await record({ storyboard, baseUrl, outDir: workDir, brand, voiceMs: voice.map((v) => v.ms), storageState, slow, log });
+        // Videos without a "Check your work" ending get one added by the AI (then saved, so it's done once).
+        const addCheck = !storyboard.scenes.some(isCheck) && get('checkStep') !== 'off';
+        const speak = voiced ? async (text) => {
+          const dir = await fs.mkdtemp(path.join(workDir, 'check-'));
+          return (await synthesizeVoice([text], dir, log, clips.voice || wanted))[0] || null;
+        } : null;
+        r = await record({ storyboard, baseUrl, outDir: workDir, brand, voiceMs: sceneVoiceMs(), storageState, slow, log, addCheck, speak });
       } catch (e) {
         e.aiUsd = aiUsd + (e.repairUsage?.costUsd || 0);
         throw e;
@@ -54,6 +62,14 @@ export async function makeVideo({ storyboard, baseUrl, jobId, storageState, log 
         storyboard = applyRepairs(storyboard, r.repairs);
         for (const x of r.repairs) aiFixes.push(`The AI fixed a step in "${storyboard.scenes[x.scene].chapter}": ${x.why} Check that the narration still matches.`);
         log(`AI fixed ${r.repairs.length} step(s) for $${r.repairUsage.costUsd.toFixed(3)}; saved into the video's steps`);
+      }
+      if (r.check) {
+        const { scene, clip } = r.check;
+        storyboard = { ...storyboard, scenes: [...storyboard.scenes, scene] };
+        texts.splice(texts.length - 1, 0, scene.narration);
+        if (voiced && clip) { clips = Object.assign([...clips.slice(0, -1), clip, clips.at(-1)], { voice: clips.voice }); voiceChars += scene.narration.length; }
+        aiFixes.push(`The AI added a "${scene.chapter}" ending that shows the result: "${scene.narration}" Check it shows the right thing.`);
+        log(`added a "${scene.chapter}" ending; saved into the video's steps`);
       }
       log(`recorded ${r.timeline.scenes.length} scenes in ${secs(t1)}s${slow ? ' (slow re-record)' : ''}`);
       timings.recordSec = (timings.recordSec || 0) + +secs(t1);

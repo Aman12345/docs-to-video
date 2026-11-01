@@ -8,6 +8,7 @@ export const SETTINGS = {
   repairMaxTurns: { env: 'REPAIR_MAX_TURNS', default: '4' },
   reasoningEffort: { env: 'AI_REASONING_EFFORT', default: 'low' }, // for OpenAI GPT models
   voice: { env: '', default: '' }, // default voice id (src/voices.mjs); empty: TTS_MODEL / TTS_VOICE
+  checkStep: { env: 'CHECK_STEP', default: 'on' }, // end each video by showing the result
 };
 
 let saved = {};

@@ -217,7 +217,7 @@ export async function compose({ rawPath, timeline: rawTimeline, outDir, brand, c
   const chap = (start, end, title) => `[CHAPTER]\nTIMEBASE=1/1000\nSTART=${Math.round(start * 1000)}\nEND=${Math.round(end * 1000)}\ntitle=${title.replace(/[=;#\\\n]/g, ' ')}\n`;
   await fs.writeFile(metaPath, `;FFMETADATA1\ntitle=${storyboard.title.replace(/[=;#\\\n]/g, ' ')}\n`
     + chap(0, INTRO, 'Introduction')
-    + scenes.map((s, i) => chap(INTRO + s.a, INTRO + s.b, `Step ${i + 1}: ${s.chapter}`)).join('')
+    + scenes.map((s, i) => chap(INTRO + s.a, INTRO + s.b, s.check ? s.chapter : `Step ${i + 1}: ${s.chapter}`)).join('')
     + chap(INTRO + rawDur, total, 'Done'));
 
   // Graphics: caption pills (step narration only; the intro and closing cards carry their own text),

@@ -27,6 +27,7 @@ export function instructions(scene) {
       case 'hover': return { verb: 'Point to', what: n };
       case 'goto': return { verb: 'Go to', what: st.url };
       case 'scroll': return { verb: 'Scroll', what: (st.dy || 500) < 0 ? 'up' : 'down', plain: true };
+      case 'show': return { verb: 'Check that you see', what: n || 'the result' };
       case 'wait': return st.gone
         ? { verb: 'Wait until', what: st.text || 'the busy indicator', tail: 'disappears', note: 'this can take a few minutes' }
         : { verb: 'Wait until you see', what: st.text || 'the result', note: 'this can take a few minutes' };

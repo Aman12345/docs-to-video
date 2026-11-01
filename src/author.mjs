@@ -7,6 +7,8 @@ import { chromium } from 'playwright';
 // Keep the browser alive when the server is asked to stop, so the worker decides what happens to the job.
 const LAUNCH = { handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false };
 import { locate, perform, performPageStep } from './locate.mjs';
+import { planCheck, CHECK_CHAPTER } from './check.mjs';
+import { get } from './settings.mjs';
 import { authorModel, chat, parseJson, snapshot, describe, newUsage } from './ai.mjs';
 
 const MAX_ACTIONS = 22; // Miter AI flows need room: popups, navigation, form, chat, approve, waits
@@ -83,6 +85,7 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
   const usage = newUsage(model);
   const actions = [];
   const history = [];
+  let checkPlan = null;
   let errors = 0;
 
   const browser = await chromium.launch(LAUNCH);
@@ -131,6 +134,11 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
       }
     }
     if (!actions.length) throw new Error('The AI did not find any steps to perform.');
+    // The ending: show the finished result ("Check your work"), planned on this final screen.
+    if (get('checkStep') !== 'off') {
+      checkPlan = await planCheck(page, { storyboard: { title: prompt, prompt, scenes: [{ steps: actions }] }, usage, log,
+        tryShow: async (pl) => locate(page, pl.show).waitFor({ state: 'visible', timeout: 6000 }).then(() => true, () => false) }).catch((e) => { log(`check your work: skipped (${e.message.split('\n')[0]})`); return null; });
+    }
   } catch (e) {
     e.screenshot = await page.screenshot({ type: 'jpeg', quality: 70 }).catch(() => null);
     throw e;
@@ -156,6 +164,8 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
     scenes = actions.map((a, i) => ({ chapter: `Step ${i + 1}`, narration: a.narration || describe(a), steps: [toStep(a)] }));
   }
   scenes.at(-1).steps.push({ do: 'pause', ms: 1500 });
+  if (checkPlan) scenes.push({ chapter: checkPlan.chapter || CHECK_CHAPTER, narration: checkPlan.narration, check: true,
+    steps: [...checkPlan.reveal.map((a) => ({ ...a, optional: true })), { do: 'show', target: checkPlan.show }, { do: 'pause', ms: 1500 }] });
 
   const storyboard = {
     id: slugify(outline.title || prompt),

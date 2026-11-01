@@ -26,7 +26,7 @@ export function displayTitle(sb, brand) {
 const NUM = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
 export function introText(sb, brand) {
   if (sb.intro) return sb.intro;
-  const n = sb.scenes.length;
+  const n = sb.scenes.filter((s) => !s.check).length; // the "Check your work" ending isn't counted as a step
   return `Here's how to ${task(sb.title)}${inProduct(sb, brand)}. It takes ${NUM[n] || n} quick step${n === 1 ? '' : 's'}.`;
 }
 

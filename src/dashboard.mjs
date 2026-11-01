@@ -173,6 +173,8 @@ ${msg ? `<div class="ok">${esc(msg)}</div>` : ''}${err ? `<div class="err">${esc
 <div class="row"><div><label>When a step stops working</label>${sel('repair', [['', `Render / default (${cur.repair.from === 'settings' ? 'on' : cur.repair.value})`], ['on', 'Let the AI fix it'], ['off', 'Stop and report the error']], val('repair'))}
 <span class="price">${note('repair')}</span></div>
 <div><label>Tries per broken step</label><input name="repairMaxTurns" type="number" min="1" max="8" value="${esc(val('repairMaxTurns'))}" placeholder="${esc(cur.repairMaxTurns.value)}"><span class="price">${note('repairMaxTurns')}</span></div></div>
+<label>"Check your work" ending</label>${sel('checkStep', [['', `Render / default (${cur.checkStep.from === 'settings' ? 'on' : cur.checkStep.value})`], ['on', 'End each video by showing the result'], ['off', 'No ending step']], val('checkStep'))}
+<span class="price">The AI picks the finished result, clears anything covering it, highlights it and writes one line about it. Added once per video, then saved with its steps. ${note('checkStep')}</span>
 <label>Thinking effort (OpenAI GPT models only)</label>${sel('reasoningEffort', [['', `Render / default (${cur.reasoningEffort.from === 'settings' ? 'low' : cur.reasoningEffort.value})`], ['low', 'Low — fastest and cheapest'], ['medium', 'Medium'], ['high', 'High — slowest, for tricky screens']], val('reasoningEffort'))}
 <span class="price">${note('reasoningEffort')}</span>
 </section>

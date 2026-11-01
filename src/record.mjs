@@ -7,6 +7,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { locate, perform, performPageStep } from './locate.mjs';
 import { takeOver } from './repair.mjs';
+import { planCheck, isCheck, CHECK_CHAPTER } from './check.mjs';
 import { repairModel, newUsage, describe } from './ai.mjs';
 import { get } from './settings.mjs';
 
@@ -39,7 +40,8 @@ async function glide(page, x, y, steps = 36) {
 const sceneMinMs = (text, voiceMs = 0) => Math.max(3500, (text.split(/\s+/).length / 2.6) * 1000 + 1200, voiceMs ? CHAPTER_CARD_MS + voiceMs + 700 : 0);
 
 // slow: used for an automatic re-record after a blank-screen warning; gives pages more time to load.
-export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs = [], storageState, slow = false, log = console.log }) {
+// addCheck: the steps have no "Check your work" ending yet, so the AI adds one at the end (speak(text) makes its voice).
+export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs = [], storageState, slow = false, log = console.log, addCheck = false, speak }) {
   await fs.mkdir(outDir, { recursive: true });
   const videoPath = path.join(outDir, 'raw.webm');
   const browser = await chromium.launch(LAUNCH); // headless; Render has no display
@@ -89,6 +91,23 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
     await loc.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
     const box = await loc.boundingBox();
     if (!box) throw new Error('The element has no size on screen.');
+    if (step.do === 'show') {
+      // "Check your work": point at the result, ring it and hold, without clicking. Big results (a whole
+      // report) aren't zoomed; small ones (a new row, a confirmation) get a gentle zoom.
+      const big = box.width * box.height > 0.35 * VIEWPORT.width * VIEWPORT.height;
+      // Rest the cursor just below the result's right edge (or inside its top-right corner if there's no
+      // room), so it points at the result without covering any of it.
+      const below = box.y + box.height + 40 < VIEWPORT.height;
+      const cx = Math.min(box.x + box.width - 30, VIEWPORT.width - 30);
+      const cy = below ? box.y + box.height + 16 : Math.max(box.y + 10, 10);
+      await glide(page, cx, cy);
+      await page.evaluate(([x, y, w, h]) => window.__demoHighlight?.(x, y, w, h), [box.x, box.y, box.width, box.height]);
+      const aStart = now();
+      await sleep(2600);
+      page.evaluate(() => window.__demoHighlightOff?.()).catch(() => {});
+      timeline.actions.push({ scene: sceneIdx, do: 'show', zoom: !big, start: aStart, end: now(), box: { x: box.x, y: box.y, w: box.width, h: box.height } });
+      return;
+    }
     // Glide to the control, pulse a ring around it for about a second, then use it.
     await glide(page, box.x + box.width / 2, box.y + box.height / 2);
     const ring = step.do !== 'press';
@@ -108,10 +127,11 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
     if (slow) await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
   }
 
-  try {
-    for (const [i, scene] of storyboard.scenes.entries()) {
+  const n = storyboard.scenes.filter((s) => !isCheck(s)).length;
+  let check = null;
+  async function runScene(i, scene, sceneVoiceMs, last) {
       sceneIdx = i;
-      log(`step ${i + 1} of ${storyboard.scenes.length}: ${scene.chapter}`);
+      log(isCheck(scene) ? `${scene.chapter} (showing the result)` : `step ${i + 1} of ${n}: ${scene.chapter}`);
       const start = now();
       skipped = 0;
       await sleep(CHAPTER_CARD_MS); // the branded chapter card is overlaid here during compose
@@ -123,6 +143,8 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
           done.push(step);
           continue;
         } catch (err) {
+          // Optional steps (e.g. closing a panel before showing the result) may no longer be needed.
+          if (step.optional) { log(`  not needed this time (${String(err.message).split('\n')[0].slice(0, 120)})`); cut(f0 + 300, now() - 300, 'repair'); continue; }
           if (!repairOn() || step.do === 'pause') throw err;
           log(`  that step didn't work (${String(err.message).split('\n')[0].slice(0, 160)}); waiting for the page and trying again`);
           // Quick fix first, no AI: the page may just be slow.
@@ -143,10 +165,35 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
           done.push(...fix.steps);
         }
       }
-      const last = i === storyboard.scenes.length - 1;
-      const left = sceneMinMs(scene.narration, voiceMs[i]) + (last ? 1200 : 0) - (now() - start - skipped);
+      const left = sceneMinMs(scene.narration, sceneVoiceMs) + (last ? 1200 : 0) - (now() - start - skipped);
       if (left > 0) await sleep(left);
-      timeline.scenes.push({ chapter: scene.chapter, narration: scene.narration, start, end: now() });
+      timeline.scenes.push({ chapter: scene.chapter, narration: scene.narration, start, end: now(), ...(isCheck(scene) ? { check: true } : {}) });
+  }
+
+  try {
+    const total = storyboard.scenes.length;
+    for (const [i, scene] of storyboard.scenes.entries()) await runScene(i, scene, voiceMs[i], i === total - 1 && !addCheck);
+    // No "Check your work" ending saved yet: the AI picks the result to show and writes its line.
+    // Its thinking and the voice it makes are cut, so the video goes straight into the new scene.
+    if (addCheck && repairOn()) {
+      const p0 = now();
+      try {
+        log('Check your work: the AI is finding the result to show');
+        const plan = await planCheck(page, { storyboard, usage: repairUsage, log,
+          tryShow: async (pl) => locate(page, pl.show).waitFor({ state: 'visible', timeout: 6000 }).then(() => true, () => false) });
+        if (plan) {
+          const clip = speak ? await speak(plan.narration).catch(() => null) : null;
+          const scene = { chapter: plan.chapter || CHECK_CHAPTER, narration: plan.narration, check: true,
+            steps: [...plan.reveal.map((a) => ({ ...a, optional: true })), { do: 'show', target: plan.show }, { do: 'pause', ms: 1500 }] };
+          cut(p0, now(), 'repair');
+          await runScene(total, scene, clip?.ms, true);
+          check = { scene, clip };
+        } else cut(p0, now(), 'repair');
+      } catch (e) {
+        cut(p0, now(), 'repair');
+        log(`Check your work: skipped (${String(e.message).split('\n')[0].slice(0, 160)})`);
+        if (!check) await sleep(1200);
+      }
     }
     await sleep(400);
   } catch (e) {
@@ -160,5 +207,5 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
     await browser.close().catch(() => {});
   }
   await fs.writeFile(path.join(outDir, 'timeline.json'), JSON.stringify(timeline, null, 2));
-  return { videoPath, timeline, repairs, repairUsage };
+  return { videoPath, timeline, repairs, repairUsage, check };
 }
