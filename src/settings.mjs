@@ -9,7 +9,7 @@ export const SETTINGS = {
   reasoningEffort: { env: 'AI_REASONING_EFFORT', default: 'low' }, // for OpenAI GPT models
   voice: { env: '', default: '' }, // default voice id (src/voices.mjs); empty: TTS_MODEL / TTS_VOICE
   checkStep: { env: 'CHECK_STEP', default: 'on' }, // end each video by showing the result
-  recordOn: { env: '', default: 'render' }, // render / cloudrun: which workers take new jobs
+  recordOn: { env: 'RECORD_ON', default: 'render' }, // render / github / cloudrun: which workers take new jobs (src/runners.mjs)
 };
 
 let saved = {};
@@ -41,4 +41,4 @@ export const get = (key) => setting(key).value;
 
 // New jobs go to the workers chosen on the Settings page. Workers only take jobs from their own pool
 // (WORKER_POOL on the worker; Render's worker has none), so a Cloud Run test never collides with Render.
-export const poolForNewJob = () => (get('recordOn') === 'cloudrun' ? { pool: 'cloudrun' } : {});
+export const poolForNewJob = () => (['github', 'cloudrun'].includes(get('recordOn')) ? { pool: get('recordOn') } : {});

@@ -1,0 +1,99 @@
+# Records videos on GitHub Actions: one fresh machine (4 CPUs, 16 GB, free for public repos) per waiting
+# video. The dashboard starts this when a video is queued with Settings -> "Where videos record" set to
+# GitHub Actions; you can also start it by hand (Actions tab -> Record videos -> Run workflow).
+# Each machine takes one waiting GitHub job from MongoDB, records it, saves it, and stops.
+#
+# Repo secrets (Settings -> Secrets and variables -> Actions), copied from Render's Environment tab:
+#   MONGODB_URI, OPENROUTER_API_KEY, and whichever of LOGIN_SECRET / DEMO_PASSWORD / API_KEY Render has
+# Optional, so each run lets only its own machine into MongoDB (instead of allowing every address):
+#   ATLAS_PUBLIC_KEY, ATLAS_PRIVATE_KEY (an Atlas API key with "Project Network Access Manager"), and the
+#   repo variable ATLAS_PROJECT_ID. Logs are public on a public repo, so the worker runs with LOG_QUIET:
+#   step details stay in the dashboard's activity page; secrets are always hidden by GitHub.
+name: Record videos
+
+on:
+  workflow_dispatch:
+    inputs:
+      machines:
+        description: How many videos to record at once (one machine each, up to 20)
+        default: '1'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.list.outputs.list }}
+    steps:
+      - id: list
+        run: |
+          n="${{ inputs.machines }}"; [[ "$n" =~ ^[0-9]+$ ]] || n=1; (( n < 1 )) && n=1; (( n > 20 )) && n=20
+          echo "list=$(seq -s, 1 "$n" | sed 's/^/[/; s/$/]/')" >> "$GITHUB_OUTPUT"
+
+  record:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        machine: ${{ fromJSON(needs.plan.outputs.list) }}
+    # Same browser image as the Render server (Playwright 1.63 with Chromium)
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      options: --ipc=host
+    env:
+      MONGODB_URI: ${{ secrets.MONGODB_URI }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      LOGIN_SECRET: ${{ secrets.LOGIN_SECRET }}
+      DEMO_PASSWORD: ${{ secrets.DEMO_PASSWORD }}
+      API_KEY: ${{ secrets.API_KEY }}
+      NARRATION: 'on'
+      RECORD_ZOOM: '1'
+      PUBLIC_URL: https://docs-to-video-demo.onrender.com
+      WORKER_POOL: github
+      RUN_ONCE: '1'
+      LOG_QUIET: '1'
+      SERVER_USD_PER_MONTH: '0'
+      # Secrets can't be used in "if:" directly, so this says whether an Atlas key was added.
+      HAS_ATLAS_KEY: ${{ secrets.ATLAS_PUBLIC_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ffmpeg and fonts (same as the Dockerfile)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends ffmpeg fonts-dejavu-core fonts-inter fonts-noto-core fonts-noto-color-emoji curl >/dev/null
+
+      - name: Install the app (the image already has Node)
+        run: node --version && npm ci --omit=dev --no-audit --no-fund
+
+      - name: Let this machine into MongoDB for 2 hours (only if an Atlas key is set)
+        if: env.HAS_ATLAS_KEY == 'true'
+        env:
+          PUB: ${{ secrets.ATLAS_PUBLIC_KEY }}
+          PRIV: ${{ secrets.ATLAS_PRIVATE_KEY }}
+          PROJECT: ${{ vars.ATLAS_PROJECT_ID }}
+        run: |
+          IP="$(curl -fsS https://api.ipify.org)"; echo "::add-mask::$IP"; echo "RUNNER_IP=$IP" >> "$GITHUB_ENV"
+          UNTIL="$(date -u -d '+2 hours' +%Y-%m-%dT%H:%M:%SZ)"
+          curl -fsS --digest -u "$PUB:$PRIV" -X POST "https://cloud.mongodb.com/api/atlas/v2/groups/$PROJECT/accessList" \
+            -H 'Accept: application/vnd.atlas.2023-01-01+json' -H 'Content-Type: application/json' \
+            -d "[{\"ipAddress\":\"$IP\",\"comment\":\"docs-to-video GitHub run $GITHUB_RUN_ID\",\"deleteAfterDate\":\"$UNTIL\"}]" >/dev/null
+          sleep 20 # Atlas takes a few seconds to apply it
+
+      - name: Record one video
+        run: node src/worker.mjs
+
+      - name: Remove this machine from MongoDB's access list
+        if: always() && env.HAS_ATLAS_KEY == 'true' && env.RUNNER_IP != ''
+        env:
+          PUB: ${{ secrets.ATLAS_PUBLIC_KEY }}
+          PRIV: ${{ secrets.ATLAS_PRIVATE_KEY }}
+          PROJECT: ${{ vars.ATLAS_PROJECT_ID }}
+        run: |
+          curl -fsS --digest -u "$PUB:$PRIV" -X DELETE "https://cloud.mongodb.com/api/atlas/v2/groups/$PROJECT/accessList/$RUNNER_IP" \
+            -H 'Accept: application/vnd.atlas.2023-01-01+json' >/dev/null || echo "Could not remove it now; it expires on its own within 2 hours."

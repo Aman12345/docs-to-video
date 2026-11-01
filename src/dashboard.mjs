@@ -2,6 +2,7 @@
 // play and approve the result. Protected with a password when DEMO_PASSWORD is set.
 import { authorModel, repairModel, chat, parseJson, newUsage } from './ai.mjs';
 import { SETTINGS, setting, saveSettings, poolForNewJob } from './settings.mjs';
+import { RUNNERS, kickRunners, githubReady } from './runners.mjs';
 import crypto from 'node:crypto';
 import { VOICES, defaultVoice, isVoice, perVideo } from './voices.mjs';
 import fs from 'node:fs/promises';
@@ -59,6 +60,7 @@ export async function queueRerecords(db, filter = {}, source = 'rerecord', voice
       status: 'queued', storyboard: v.storyboard, rerecordOf: v.slug, attempts: 0, createdAt: new Date(Date.now() + i), source, ...(voice ? { voice } : {}), ...poolForNewJob(),
     })));
   }
+  await kickRunners(db).catch(() => {});
   return todo.length;
 }
 
@@ -179,8 +181,9 @@ ${msg ? `<div class="ok">${esc(msg)}</div>` : ''}${err ? `<div class="err">${esc
 <span class="price">${note('reasoningEffort')}</span>
 </section>
 <section class="card"><h2>Where videos record</h2>
-<label>New videos and re-records run on</label>${sel('recordOn', [['', 'Render (this server)'], ['cloudrun', 'Google Cloud Run (test)']], val('recordOn'))}
-<span class="price">For Google Cloud Run, set it up once in Cloud Shell (see cloudrun/README.md in the repo), then start each batch with <code>bash cloudrun/run.sh</code>. Jobs wait in the queue until then. Jobs already queued stay where they are.</span>
+<label>New videos and re-records run on</label>${sel('recordOn', [['', `Render / default (${RUNNERS[cur.recordOn.value]?.short || cur.recordOn.value})`], ...Object.entries(RUNNERS).map(([k, r]) => [k, r.label])], val('recordOn'))}
+<span class="price">${note('recordOn')}. <strong>GitHub Actions</strong>: each video gets its own 4-CPU machine, about 20 at once, free for this public repo. ${githubReady() ? 'The dashboard can start GitHub machines.' : '<span style="color:#b54708">Needs one-time setup: repo secrets on GitHub and GITHUB_DISPATCH_TOKEN on Render (see "Record on GitHub Actions" in the README).</span>'}
+<strong>Google Cloud Run</strong>: set up once in Cloud Shell (cloudrun/README.md), then start batches with <code>bash cloudrun/run.sh</code>. Jobs already queued stay where they are.</span>
 </section>
 <section class="card"><h2>Voice</h2>
 <label>Default voice for new videos</label>${sel('voice', [['', 'Render setting (TTS_MODEL / TTS_VOICE)'], ...VOICES.map((o) => [o.id, `${o.label} · ${perVideo(o)}`])], val('voice'))}
@@ -269,8 +272,9 @@ ${jobs.map((j) => {
       : `<form method="post" action="/ui/retry/${j._id}" style="display:inline"><button class="ghost" style="padding:3px 10px;margin-left:6px">Retry</button></form>`}`
     : j.status === 'running' ? `${esc(friendly(j.lastEvent) || (j.stage === 'planning' ? 'The AI is planning the steps...' : 'recording...'))}`
     : j.status === 'queued' && j.pool === 'cloudrun' ? 'Waiting for Google Cloud Run: start the job in Cloud Shell (bash cloudrun/run.sh)'
+    : j.status === 'queued' && j.pool === 'github' ? `${esc(friendly(j.lastEvent) || 'Waiting for a GitHub machine')} <form method="post" action="/ui/kick" style="display:inline"><button class="ghost" style="padding:3px 10px;margin-left:6px" title="Ask GitHub for machines again, e.g. if a run was cancelled">Start GitHub machines</button></form>`
     : j.status === 'queued' && j.lastEvent ? esc(friendly(j.lastEvent)) : '';
-  return `<tr><td>${esc(j.storyboard?.title || j.prompt)}${j.type === 'prompt' ? ' <span class="meta">(from prompt)</span>' : ''}${j.pool === 'cloudrun' ? ' <span class="meta">(Google Cloud Run)</span>' : ''}</td><td>${statusPill(j.status)}</td><td class="meta">${ago(j.createdAt)}</td><td class="meta">${result} <a href="/ui/jobs/${j._id}" style="white-space:nowrap">activity</a></td></tr>`;
+  return `<tr><td>${esc(j.storyboard?.title || j.prompt)}${j.type === 'prompt' ? ' <span class="meta">(from prompt)</span>' : ''}${RUNNERS[j.pool] ? ` <span class="meta">(${esc(RUNNERS[j.pool].short)})</span>` : ''}</td><td>${statusPill(j.status)}</td><td class="meta">${ago(j.createdAt)}</td><td class="meta">${result} <a href="/ui/jobs/${j._id}" style="white-space:nowrap">activity</a></td></tr>`;
 }).join('')}
 </tbody></table>` : '<p class="empty">No jobs yet.</p>'}
 
@@ -383,6 +387,7 @@ export async function handleDashboard(db, req, res, url) {
       return redirect(res, `/?error=${encodeURIComponent(`Could not read storyboard: ${e.message}`)}`);
     }
     await db.collection('jobs').insertOne({ status: 'queued', storyboard, attempts: 0, createdAt: new Date(), source: 'dashboard', ...pickVoice(form), ...poolForNewJob() });
+    await kickRunners(db).catch(() => {});
     return redirect(res);
   }
   if (req.method === 'POST' && p === '/ui/prompt') {
@@ -399,21 +404,30 @@ export async function handleDashboard(db, req, res, url) {
       type: 'prompt', status: 'queued', prompt, startUrl: startUrl || '/#/dashboard', ...(login ? { login } : {}),
       planOnly: form.planOnly === '1', attempts: 0, createdAt: new Date(), source: 'dashboard', ...pickVoice(form), ...poolForNewJob(),
     });
+    await kickRunners(db).catch(() => {});
     return redirect(res);
   }
   if (req.method === 'POST' && p.startsWith('/ui/record/')) {
     const planned = await db.collection('jobs').findOne({ _id: new ObjectId(p.split('/')[3]) });
     if (!planned?.storyboard) return redirect(res, `/?error=${encodeURIComponent('That plan was not found.')}`);
     await db.collection('jobs').insertOne({ status: 'queued', storyboard: planned.storyboard, attempts: 0, createdAt: new Date(), source: 'dashboard', ...poolForNewJob() });
+    await kickRunners(db).catch(() => {});
     return redirect(res);
   }
   if (req.method === 'POST' && p.startsWith('/ui/retry/')) {
     // Re-queue a failed job. A prompt job keeps Claude's plan if it has one, so it isn't paid for twice.
     await db.collection('jobs').updateOne(
       { _id: new ObjectId(p.split('/')[3]), status: 'failed' },
-      { $set: { status: 'queued', attempts: 0, createdAt: new Date() }, $unset: { error: '', stage: '' } },
+      { $set: { status: 'queued', attempts: 0, createdAt: new Date() }, $unset: { error: '', stage: '', dispatchedAt: '' } },
     );
+    await kickRunners(db).catch(() => {});
     return redirect(res);
+  }
+  if (req.method === 'POST' && p === '/ui/kick') {
+    // "Start GitHub machines" for GitHub jobs that are still waiting (e.g. after a cancelled run).
+    await db.collection('jobs').updateMany({ status: 'queued', pool: 'github' }, { $unset: { dispatchedAt: '' } });
+    const r = await kickRunners(db);
+    return redirect(res, r.error ? `/?error=${encodeURIComponent(r.error)}` : '/');
   }
   if (req.method === 'GET' && /^\/ui\/jobs\/[a-f0-9]{24}$/.test(p)) {
     const job = await db.collection('jobs').findOne({ _id: new ObjectId(p.split('/')[3]) }, { projection: { 'storyboard.scenes': 0 } });

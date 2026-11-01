@@ -127,6 +127,26 @@ Pick a voice per video in the dashboard (both request forms, and next to Re-reco
 the video, so re-recording keeps it. The default is whatever TTS_MODEL / TTS_VOICE are set to. If a voice
 fails, the video falls back to the default voice instead of losing narration. Voices are listed in src/voices.mjs.
 
+### Record on GitHub Actions (free)
+
+Settings → Where videos record → **GitHub Actions**: each video is recorded on its own GitHub machine
+(4 CPUs, 16 GB; free and unlimited for public repos), about 20 at once. The dashboard starts machines
+through GitHub's API when a GitHub job is queued (`.github/workflows/record.yml`); each machine records
+one waiting video, saves it to MongoDB and stops. Logs on a public repo are public, so the worker runs
+with `LOG_QUIET=1`: GitHub's log only says a job started/finished/failed; details stay in the dashboard.
+
+One-time setup:
+1. GitHub repo → Settings → Secrets and variables → Actions → **New repository secret**, copied from Render:
+   `MONGODB_URI`, `OPENROUTER_API_KEY`, and whichever of `LOGIN_SECRET` / `DEMO_PASSWORD` / `API_KEY` Render has.
+2. Let GitHub's machines reach MongoDB, either: Atlas → Network Access → allow `0.0.0.0/0`; or (safer) create
+   an Atlas API key with the *Project Network Access Manager* role, add `ATLAS_PUBLIC_KEY` and
+   `ATLAS_PRIVATE_KEY` as repo secrets and `ATLAS_PROJECT_ID` as a repo *variable*. Each run then adds
+   only its own address, which expires after 2 hours.
+3. A fine-grained GitHub token (github.com/settings/personal-access-tokens/new → only this repo →
+   permission *Actions: Read and write*) as `GITHUB_DISPATCH_TOKEN` on Render.
+4. Settings → Where videos record → GitHub Actions. Queued GitHub jobs show a "Start GitHub machines"
+   button in case a run was cancelled.
+
 ### Test on Google Cloud Run
 
 `cloudrun/` sets up the same worker as a Cloud Run job: each video gets its own 4-CPU machine that shuts

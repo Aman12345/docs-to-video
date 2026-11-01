@@ -17,6 +17,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // RUN_ONCE: take one job, then exit (Cloud Run jobs: each task records one video and stops; nothing runs idle).
 const POOL = process.env.WORKER_POOL || null;
 const RUN_ONCE = /^(1|true|yes|on)$/i.test(process.env.RUN_ONCE || '');
+const QUIET = /^(1|true|yes|on)$/i.test(process.env.LOG_QUIET || '');
 const ONCE_WAIT_MS = 60 * 1000; // a run-once worker waits this long for a job before giving up
 
 // What each video cost, so the dashboard shows real numbers, not estimates.
@@ -79,7 +80,10 @@ export async function startWorker() {
       // Everything the job does is also saved on the job (last 300 lines), for the dashboard's activity view.
       const log = (msg) => {
         msg = String(msg);
-        console.log(`[job ${job._id}] ${msg}`);
+        // LOG_QUIET (GitHub Actions on a public repo, where logs are public): print only that a job started,
+        // finished or failed. The details (pages, typed test data) stay in the dashboard's activity page.
+        if (!QUIET) console.log(`[job ${job._id}] ${msg}`);
+        else if (/^(started|done;|failed)/.test(msg)) console.log(`[job ${job._id}] ${msg.split(/[:(]/)[0].trim()} (details in the dashboard's activity page)`);
         jobs.updateOne({ _id: job._id }, { $push: { events: { $each: [{ at: new Date(), msg: msg.slice(0, 500) }], $slice: -300 } }, $set: { lastEvent: msg.slice(0, 200) } }).catch(() => {});
       };
       const jobStart = Date.now();
