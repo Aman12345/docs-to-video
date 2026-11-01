@@ -49,6 +49,9 @@ jobs:
       # Render calls it MONGO_URI; either secret name works here.
       MONGODB_URI: ${{ secrets.MONGODB_URI || secrets.MONGO_URI }}
       NODE_ENV: production
+      # Database name (Render sets MONGODB_DB); without it the default "docs_to_video" is used.
+      MONGODB_DB: ${{ secrets.MONGODB_DB }}
+      REPAIR_MODEL: ${{ secrets.REPAIR_MODEL }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       LOGIN_SECRET: ${{ secrets.LOGIN_SECRET }}
       DEMO_PASSWORD: ${{ secrets.DEMO_PASSWORD }}
