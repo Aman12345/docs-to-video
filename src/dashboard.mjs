@@ -64,6 +64,62 @@ export async function queueRerecords(db, filter = {}, source = 'rerecord', voice
 
 const redirect = (res, to = '/') => res.writeHead(303, { Location: to }).end();
 
+// ---- Job activity: what a job did, step by step ----
+// Turns log lines into plain words for the jobs table and the activity page.
+const targetName = (j) => { try { const t = JSON.parse(j); return t.name || t.label || t.placeholder || t.text || t.testId || j; } catch { return j; } };
+const shorten = (v) => (v.length > 80 ? `${v.slice(0, 77)}…` : v);
+function friendly(msg = '') {
+  return String(msg)
+    .replace(/^( {2}|AI takeover: )?(click|fill|select|press|hover|expect) (\{.*?\})(?: value="(.*?)")?(?= \(|$)/, (m, pre = '', d, t, v) => {
+      const n = targetName(t);
+      const say = d === 'click' ? `Select "${n}"` : d === 'fill' ? `Type "${shorten(v || '')}" into "${n}"` : d === 'select' ? `Choose "${v}" in "${n}"`
+        : d === 'press' ? `Press ${n}` : d === 'hover' ? `Point to "${n}"` : `Check "${n}" is on screen`;
+      return `${pre === 'AI takeover: ' ? 'The AI did: ' : pre}${say}`;
+    })
+    .replace(/^( {2})?wait until "(.*?)" \((\d+)s max\)/, '$1Wait for "$2" (up to $3s)')
+    .replace(/ \((instead|first)\) - /, (m, u) => (u === 'instead' ? ' instead. Why: ' : ' first. Why: '))
+    .replace(/^( {2})?press (\S+)$/, '$1Press $2')
+    .replace(/^step (\d+) of/, 'Step $1 of')
+    .replace(/^plan: done after (\d+) actions/, 'The AI finished planning ($1 actions)')
+    .replace(/^plan: failed /, 'The AI tried: ').replace(/^plan: /, 'The AI planned: ')
+    .replace(/^voiceover \((.*?)\): .*/, 'Voice made with $1')
+    .replace(/^started \(attempt (\d+)\): (.*)/, 'Started (attempt $1)')
+    .replace(/^ {2}/, '');
+}
+const clock = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+function jobPage(j) {
+  const ev = j.events || [];
+  const t0 = ev[0] ? new Date(ev[0].at) : null;
+  const live = j.status === 'running' || j.status === 'queued';
+  const kind = (m) => (/AI takeover|AI \(|AI fixed|the AI .*taking over/i.test(m) ? 'ai'
+    : /failed|didn't work|not working|could not|warning/i.test(m) ? 'bad'
+    : /^started|^stored|^done|^composed|^recorded/.test(m) ? 'key' : /^step \d+ of/.test(m) ? 'step' : '');
+  const rows = ev.map((e) => `<tr class="${kind(e.msg)}"><td class="t">${t0 ? clock(new Date(e.at) - t0) : ''}</td><td>${esc(friendly(e.msg))}</td></tr>`).join('');
+  const c = j.cost;
+  const done = j.status === 'done' && j.result?.slug;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Job activity</title>${live ? '<meta http-equiv="refresh" content="4">' : ''}
+<style>:root{--line:#e4e7ec;--muted:#667085}*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,sans-serif;background:#f7f8fa;color:#1d2433}main{max-width:900px;margin:0 auto;padding:24px 16px 48px}
+h1{font-size:21px;margin:4px 0}.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:16px}.meta{color:var(--muted);font-size:13px}a{color:#3b5bdb}
+.pill{display:inline-block;padding:1px 9px;border-radius:999px;font-size:12px;font-weight:600;background:#f2f4f7}.pill.running{background:#fffaeb;color:#b54708}.pill.done{background:#ecfdf3;color:#067647}.pill.failed{background:#fef3f2;color:#b42318}
+table{width:100%;border-collapse:collapse;font-size:14px}td{padding:5px 8px;border-top:1px solid #f2f4f7;vertical-align:top}td.t{color:var(--muted);width:56px;font-variant-numeric:tabular-nums}
+tr.step td{font-weight:600;padding-top:12px}tr.ai td:last-child{color:#5925dc}tr.ai td:last-child::before{content:"✦ "}tr.bad td:last-child{color:#b42318}tr.key td:last-child{color:#067647}
+img{max-width:100%;border:1px solid var(--line);border-radius:8px;margin-top:10px}dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:10px 0 0;font-size:14px}dt{color:var(--muted)}dd{margin:0}</style></head><body><main>
+<p class="meta"><a href="/">← Dashboard</a></p>
+<h1>${esc(j.storyboard?.title || j.prompt)}</h1>
+<div class="meta"><span class="pill ${esc(j.status)}">${esc(j.status)}</span> &nbsp;queued ${ago(j.createdAt)} · attempt ${j.attempts || 0}${live ? ' · this page updates itself' : ''}</div>
+<section class="card"><dl>
+${j.prompt ? `<dt>Request</dt><dd>${esc(j.prompt)}</dd>` : ''}${j.login || j.storyboard?.login ? `<dt>Signed in as</dt><dd>${esc(j.login || j.storyboard.login)}</dd>` : ''}
+${j.voice ? `<dt>Voice</dt><dd>${esc(j.voice)}</dd>` : ''}${j.rerecordOf ? `<dt>Re-record of</dt><dd><a href="/v/${esc(j.rerecordOf)}">${esc(j.rerecordOf)}</a></dd>` : ''}
+${c ? `<dt>Cost</dt><dd>$${c.total.toFixed(3)} (AI $${c.planning.toFixed(3)} · voice $${c.voice.toFixed(3)} · server $${c.server.toFixed(3)} for ${c.serverSec}s)</dd>` : ''}
+${done ? `<dt>Video</dt><dd><a href="/v/${esc(j.result.slug)}">Watch v${j.result.version}</a></dd>` : ''}
+${j.status === 'failed' ? `<dt>Error</dt><dd style="color:#b42318">${esc((j.error || '').split('\n')[0])}</dd>` : ''}
+</dl>${j.failShot && j.status !== 'done' ? `<img src="/ui/jobs/${j._id}/fail.jpg" alt="The screen when it stopped">` : ''}</section>
+<section class="card"><h2 style="font-size:16px;margin:0 0 6px">Activity</h2>
+${rows ? `<table>${rows}</table>` : '<p class="meta">Nothing yet. Activity shows here once the job starts (jobs made before this feature have none).</p>'}
+<p class="meta" style="margin-top:10px">✦ purple lines are the AI stepping in. Times are from the first line.</p></section>
+</main></body></html>`;
+}
+
 // ---- Settings page: AI models and defaults, saved in MongoDB ----
 // OpenRouter's public model list (no key needed), cached for an hour, for the model pickers.
 let modelCache = { at: 0, list: [] };
@@ -205,8 +261,9 @@ ${jobs.map((j) => {
       // Claude stopped on purpose (robot check, bot block, login wall): retrying would hit the same wall.
       ? '<span class="meta" style="margin-left:6px">This site blocks automated browsers, so retrying won\'t help. Try a different site.</span>'
       : `<form method="post" action="/ui/retry/${j._id}" style="display:inline"><button class="ghost" style="padding:3px 10px;margin-left:6px">Retry</button></form>`}`
-    : j.status === 'running' ? `${j.stage === 'planning' ? 'The AI is planning the steps...' : 'recording...'}` : '';
-  return `<tr><td>${esc(j.storyboard?.title || j.prompt)}${j.type === 'prompt' ? ' <span class="meta">(from prompt)</span>' : ''}</td><td>${statusPill(j.status)}</td><td class="meta">${ago(j.createdAt)}</td><td class="meta">${result}</td></tr>`;
+    : j.status === 'running' ? `${esc(friendly(j.lastEvent) || (j.stage === 'planning' ? 'The AI is planning the steps...' : 'recording...'))}`
+    : j.status === 'queued' && j.lastEvent ? esc(friendly(j.lastEvent)) : '';
+  return `<tr><td>${esc(j.storyboard?.title || j.prompt)}${j.type === 'prompt' ? ' <span class="meta">(from prompt)</span>' : ''}</td><td>${statusPill(j.status)}</td><td class="meta">${ago(j.createdAt)}</td><td class="meta">${result} <a href="/ui/jobs/${j._id}" style="white-space:nowrap">activity</a></td></tr>`;
 }).join('')}
 </tbody></table>` : '<p class="empty">No jobs yet.</p>'}
 
@@ -351,6 +408,12 @@ export async function handleDashboard(db, req, res, url) {
     );
     return redirect(res);
   }
+  if (req.method === 'GET' && /^\/ui\/jobs\/[a-f0-9]{24}$/.test(p)) {
+    const job = await db.collection('jobs').findOne({ _id: new ObjectId(p.split('/')[3]) }, { projection: { 'storyboard.scenes': 0 } });
+    if (!job) return redirect(res, `/?error=${encodeURIComponent('That job was not found.')}`);
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }).end(jobPage(job));
+    return true;
+  }
   if (req.method === 'GET' && p.startsWith('/ui/jobs/') && p.endsWith('/fail.jpg')) {
     const job = await db.collection('jobs').findOne({ _id: new ObjectId(p.split('/')[3]) }, { projection: { failShot: 1 } });
     if (!job?.failShot) { res.writeHead(404).end('No screenshot'); return true; }
@@ -492,7 +555,7 @@ export async function handleDashboard(db, req, res, url) {
   if (req.method === 'GET' && p === '/') {
     const [sbs, jobs, videos, logins] = await Promise.all([
       storyboards(),
-      db.collection('jobs').find({}, { projection: { 'storyboard.scenes': 0 } }).sort({ createdAt: -1 }).limit(8).toArray(),
+      db.collection('jobs').find({}, { projection: { 'storyboard.scenes': 0, events: 0 } }).sort({ createdAt: -1 }).limit(8).toArray(),
       db.collection('videos').find({}).sort({ updatedAt: -1 }).limit(24).toArray(),
       listLogins(db),
     ]);

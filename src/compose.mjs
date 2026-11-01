@@ -226,9 +226,22 @@ export async function compose({ rawPath, timeline: rawTimeline, outDir, brand, c
   const pills = await renderCaptions({ texts: [...stepCues.map((c) => c.text), ...cuts.map((c) => laterText(c.skippedSec))], brand, outDir });
   const overlays = []; // { file, x, y, start, dur, fadeIn, fadeOut }
   const W = OUT.width, H = OUT.height;
+  // The "Step 2 of 4" chip shows for the first few seconds of each step, then fades so it doesn't cover the
+  // app's top-right corner (where many apps keep buttons). It leaves earlier if that step uses something there.
+  const CHIP_SEC = 3.5, kx = W / timeline.width, ky = H / timeline.height;
+  const chipWins = [];
   scenes.forEach((s, i) => {
     const chip = cards.chips[i];
-    overlays.push({ ...chip, x: W - 20 - chip.w, y: 14, start: INTRO + s.a + 0.1, dur: Math.max(0.6, s.b - s.a - 0.15), fadeIn: 0.3, fadeOut: 0.2 });
+    const x = W - 20 - chip.w, y = 14, start = INTRO + s.a + 0.1;
+    let end = Math.min(start + CHIP_SEC, INTRO + s.b - 0.1);
+    for (const a of timeline.actions) {
+      const near = (a.box.x + a.box.w) * kx > x - 40 && a.box.y * ky < y + chip.h + 40;
+      const glideAt = INTRO + a.start / 1000 - 2; // the cursor heads there about 2 s before the click
+      if (near && a.end / 1000 + INTRO > start && glideAt < end) end = Math.max(start, glideAt);
+    }
+    if (end - start < 1) return; // not enough time before that corner is used: skip the chip for this step
+    overlays.push({ ...chip, x, y, start, dur: end - start, fadeIn: 0.3, fadeOut: 0.4 });
+    chipWins.push({ i, start, end });
   });
   // Captions sit at the bottom, but move to the top while the control being used (or about to be) is in
   // the lower part of the screen, so they never cover what the viewer needs to see.
@@ -239,10 +252,11 @@ export async function compose({ rawPath, timeline: rawTimeline, outDir, brand, c
   stepCues.forEach((c, k) => {
     const pill = pills[k];
     const top = lowAction(c.from, c.to);
-    // At the top, slide left of the step chip if they would touch.
+    // At the top, slide left of the step chip if it is showing at the same time.
     const chip = cards.chips[c.scene] || cards.chips[0];
     const centre = Math.round((W - pill.w) / 2);
-    const x = top && chip ? Math.max(20, Math.min(centre, W - 20 - chip.w - 12 - pill.w)) : centre;
+    const withChip = chipWins.some((w) => w.start < c.to && w.end > c.from);
+    const x = top && chip && withChip ? Math.max(20, Math.min(centre, W - 20 - chip.w - 12 - pill.w)) : centre;
     overlays.push({ ...pill, x, y: top ? 24 : H - 14 - pill.h, start: c.from, dur: Math.max(0.4, c.to - c.from), fadeIn: 0.15, fadeOut: 0.15 });
   });
   cuts.forEach((c, k) => {

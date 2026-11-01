@@ -63,9 +63,14 @@ export async function startWorker() {
       state.current = job._id;
       const beat = setInterval(() => jobs.updateOne({ _id: job._id, status: 'running' }, { $set: { heartbeatAt: new Date() } }).catch(() => {}), HEARTBEAT_MS);
       await jobs.updateOne({ _id: job._id }, { $set: { heartbeatAt: new Date() } });
-      const log = (msg) => console.log(`[job ${job._id}] ${msg}`);
+      // Everything the job does is also saved on the job (last 300 lines), for the dashboard's activity view.
+      const log = (msg) => {
+        msg = String(msg);
+        console.log(`[job ${job._id}] ${msg}`);
+        jobs.updateOne({ _id: job._id }, { $push: { events: { $each: [{ at: new Date(), msg: msg.slice(0, 500) }], $slice: -300 } }, $set: { lastEvent: msg.slice(0, 200) } }).catch(() => {});
+      };
       const jobStart = Date.now();
-      log(`started: ${job.storyboard?.title || job.prompt}`);
+      log(`started (attempt ${job.attempts}): ${job.storyboard?.title || job.prompt}`);
       try {
         let storyboard = job.storyboard;
         // Saved login (e.g. Miter staging): every browser for this job starts already signed in.
@@ -128,7 +133,8 @@ export async function startWorker() {
   const handBack = async () => {
     state.stopping = true;
     if (!state.current) return;
-    await jobs.updateOne({ _id: state.current, status: 'running' }, { $set: { status: 'queued', stage: null, note: 'restarted after a server update' }, $inc: { attempts: -1 } });
+    await jobs.updateOne({ _id: state.current, status: 'running' }, { $set: { status: 'queued', stage: null, note: 'restarted after a server update', lastEvent: 'Paused for a server update; it restarts in a few seconds.' }, $inc: { attempts: -1 },
+      $push: { events: { $each: [{ at: new Date(), msg: 'Paused for a server update (handed back to the queue; restarts from the beginning in a few seconds).' }], $slice: -300 } } });
     console.log(`[job ${state.current}] handed back to the queue (server restarting)`);
   };
   return { stop: async () => { state.stopping = true; await loop; }, handBack };

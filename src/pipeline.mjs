@@ -61,6 +61,7 @@ export async function makeVideo({ storyboard, baseUrl, jobId, storageState, log 
     };
     const editIt = async ({ videoPath, timeline }, c = clips) => {
       const t1 = Date.now();
+      log('editing: intro and closing cards, captions, voice, zooms, trimming dead time');
       const cutMs = (timeline.cuts || []).reduce((n, x) => n + x.end - x.start, 0);
       const cards = await renderCards({ storyboard, brand, outDir: workDir, estimatedSec: (timeline.scenes.at(-1).end - cutMs) / 1000 + 12 });
       const out = await compose({ rawPath: videoPath, timeline, outDir: workDir, brand, cards, voice: voiced ? c.slice(1, -1) : [], storyboard,
@@ -96,6 +97,7 @@ export async function makeVideo({ storyboard, baseUrl, jobId, storageState, log 
     composed.qa.fixes = [...aiFixes, ...fixes];
     composed.voiceName = composed.narrated ? clips.voice?.label || null : null;
     log(`composed ${composed.durationSec}s ${brand.name}-branded video in ${secs(t)}s (audio: ${composed.narrated ? 'voiceover + captions' : 'captions only'}; trimmed ${composed.trimmedSec}s of dead time; quality: ${composed.qa.ok ? 'ok' : composed.qa.warnings.length + ' warning(s)'})`);
+    if (composed.qa.warnings.length) log(`quality warnings: ${composed.qa.warnings.join(' ')}`);
     const db = await getDb();
     await ensureIndexes(db);
     const saved = await saveVideo(db, { storyboard, composed, jobId });

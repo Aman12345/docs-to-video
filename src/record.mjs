@@ -7,7 +7,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { locate, perform, performPageStep } from './locate.mjs';
 import { takeOver } from './repair.mjs';
-import { repairModel, newUsage } from './ai.mjs';
+import { repairModel, newUsage, describe } from './ai.mjs';
 import { get } from './settings.mjs';
 
 // AI takeover is on when an OpenRouter key is set; REPAIR=off turns it off.
@@ -111,17 +111,20 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
   try {
     for (const [i, scene] of storyboard.scenes.entries()) {
       sceneIdx = i;
+      log(`step ${i + 1} of ${storyboard.scenes.length}: ${scene.chapter}`);
       const start = now();
       skipped = 0;
       await sleep(CHAPTER_CARD_MS); // the branded chapter card is overlaid here during compose
       for (const [j, step] of scene.steps.entries()) {
         const f0 = now();
+        if (step.do !== 'pause') log(`  ${describe(step)}`);
         try {
           await runStep(step);
           done.push(step);
           continue;
         } catch (err) {
           if (!repairOn() || step.do === 'pause') throw err;
+          log(`  that step didn't work (${String(err.message).split('\n')[0].slice(0, 160)}); waiting for the page and trying again`);
           // Quick fix first, no AI: the page may just be slow.
           await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
           try {
@@ -130,6 +133,7 @@ export async function record({ storyboard, baseUrl, outDir, brand = {}, voiceMs 
             done.push(step);
             continue;
           } catch { /* hand over to the AI */ }
+          log(`  still not working: the AI (${repairModel()}) is taking over`);
           const failedAt = now();
           const fix = await takeOver(page, { storyboard, scene, step, error: err, done, act: runStep, clock: now, usage: repairUsage, log });
           // Cut the failed tries and the AI's thinking; keep what it did on screen.
