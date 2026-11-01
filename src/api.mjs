@@ -1,5 +1,6 @@
 // video-api: the one front door for Slack, the support agent and client share links.
 // Runs as a Render web service. Videos stream straight out of MongoDB GridFS.
+import { isVoice } from './voices.mjs';
 import http from 'node:http';
 import { ObjectId } from 'mongodb';
 import { getDb, ensureIndexes, bucket } from './store.mjs';
@@ -86,19 +87,19 @@ const server = http.createServer(async (req, res) => {
     // Queue a new video. In production the Slack bot or the support agent calls this.
     if (req.method === 'POST' && url.pathname === '/jobs') {
       if (!authed) return json(res, 401, { error: 'unauthorized' });
-      const { storyboard } = await readBody(req);
+      const { storyboard, voice } = await readBody(req);
       if (!storyboard?.id || !Array.isArray(storyboard.scenes)) return json(res, 400, { error: 'storyboard with id and scenes required' });
-      const { insertedId } = await db.collection('jobs').insertOne({ status: 'queued', storyboard, attempts: 0, createdAt: new Date() });
+      const { insertedId } = await db.collection('jobs').insertOne({ status: 'queued', storyboard, attempts: 0, createdAt: new Date(), ...(isVoice(voice) ? { voice } : {}) });
       return json(res, 202, { jobId: insertedId, status: 'queued' });
     }
     // Describe a video in plain English; Claude plans the storyboard, then it's recorded.
     if (req.method === 'POST' && url.pathname === '/prompts') {
       if (!authed) return json(res, 401, { error: 'unauthorized' });
-      const { prompt, startUrl, planOnly } = await readBody(req);
+      const { prompt, startUrl, planOnly, voice } = await readBody(req);
       if (!prompt?.trim()) return json(res, 400, { error: 'prompt required' });
       const { insertedId } = await db.collection('jobs').insertOne({
         type: 'prompt', status: 'queued', prompt: prompt.trim().slice(0, 1000), startUrl: startUrl || '/#/dashboard',
-        planOnly: !!planOnly, attempts: 0, createdAt: new Date(), source: 'api',
+        planOnly: !!planOnly, attempts: 0, createdAt: new Date(), source: 'api', ...(isVoice(voice) ? { voice } : {}),
       });
       return json(res, 202, { jobId: insertedId, status: 'queued' });
     }
@@ -122,9 +123,9 @@ const server = http.createServer(async (req, res) => {
     // Body: {} for every video, {"status":"approved"} for approved ones, or {"slugs":["a","b"]}.
     if (req.method === 'POST' && url.pathname === '/videos/rerecord') {
       if (!authed) return json(res, 401, { error: 'unauthorized' });
-      const { status, slugs } = await readBody(req);
+      const { status, slugs, voice } = await readBody(req);
       const filter = Array.isArray(slugs) ? { slug: { $in: slugs } } : status ? { status } : {};
-      return json(res, 202, { queued: await queueRerecords(db, filter, 'api') });
+      return json(res, 202, { queued: await queueRerecords(db, filter, 'api', isVoice(voice) ? voice : undefined) });
     }
     if (req.method === 'POST' && parts[0] === 'videos' && parts[2] === 'approve') {
       if (!authed) return json(res, 401, { error: 'unauthorized' });

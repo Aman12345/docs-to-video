@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { CHAPTER_CARD_MS } from './record.mjs';
 import { renderCaptions } from './cards.mjs';
+import { defaultVoice } from './voices.mjs';
 
 const FPS = 30;
 const OUT = { width: 1920, height: 1080 };
@@ -47,7 +48,9 @@ export const narrationOn = () => /^(on|true|1|yes)$/i.test(process.env.NARRATION
 // be held long enough for its sentence. Returns [{file, ms}] per scene, or [] if narration is off
 // or fails (the video then simply has captions only).
 // texts: array of strings (intro, each scene, outro). Returns one {file, ms} per text, or [].
-export async function synthesizeVoice(texts, outDir, log = console.log) {
+// voice: one of VOICES (src/voices.mjs). If that voice fails, it falls back to the default voice once.
+// The returned array has .voice set to the voice actually used (for the cost).
+export async function synthesizeVoice(texts, outDir, log = console.log, voice = defaultVoice()) {
   if (process.env.TTS_FAKE) { // local testing without a key: a quiet tone as long as the speech would be
     return Promise.all(texts.map(async (text, i) => {
       const file = path.join(outDir, `voice-${i}.m4a`);
@@ -57,21 +60,40 @@ export async function synthesizeVoice(texts, outDir, log = console.log) {
     }));
   }
   if (!narrationOn()) return [];
+  const speak = async (model, name, text, i) => {
+    const res = await fetch('https://openrouter.ai/api/v1/audio/speech', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, input: text, voice: name, response_format: 'mp3' }),
+    });
+    if (!res.ok) throw new Error(`TTS ${res.status} ${(await res.text()).slice(0, 200)}`);
+    const file = path.join(outDir, `voice-${i}.mp3`);
+    await fs.writeFile(file, Buffer.from(await res.arrayBuffer()));
+    return { file, ms: await mediaMs(file) };
+  };
+  const tryVoice = async (v) => {
+    let first, name, lastErr;
+    for (const n of v.voices) { // find the voice name this model accepts, using the first sentence
+      try { first = await speak(v.model, n, texts[0], 0); name = n; break; } catch (e) { lastErr = e; }
+    }
+    if (!name) throw lastErr;
+    const rest = await Promise.all(texts.slice(1).map((t, i) => speak(v.model, name, t, i + 1)));
+    return Object.assign([first, ...rest], { voice: v });
+  };
   try {
-    return await Promise.all(texts.map(async (text, i) => {
-      const res = await fetch('https://openrouter.ai/api/v1/audio/speech', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: process.env.TTS_MODEL || 'mistralai/voxtral-mini-tts-3-0', input: text, voice: process.env.TTS_VOICE || 'en_paul_neutral', response_format: 'mp3' }),
-      });
-      if (!res.ok) throw new Error(`TTS ${res.status} ${(await res.text()).slice(0, 200)}`);
-      const file = path.join(outDir, `voice-${i}.mp3`);
-      await fs.writeFile(file, Buffer.from(await res.arrayBuffer()));
-      return { file, ms: await mediaMs(file) };
-    }));
+    return await tryVoice(voice);
   } catch (e) {
-    log(`narration skipped: ${e.message.slice(0, 200)}`);
-    return [];
+    const fallback = defaultVoice();
+    log(`voice "${voice.label}" failed: ${e.message.slice(0, 200)}`);
+    if (fallback.model === voice.model && fallback.voices[0] === voice.voices[0]) return [];
+    try {
+      const clips = await tryVoice(fallback);
+      log(`used the default voice "${fallback.label}" instead`);
+      return clips;
+    } catch (e2) {
+      log(`narration skipped: ${e2.message.slice(0, 200)}`);
+      return [];
+    }
   }
 }
 

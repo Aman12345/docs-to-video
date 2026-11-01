@@ -1,5 +1,6 @@
 // A small web page for the demo: pick a storyboard, click "Make video", watch the job,
 // play and approve the result. Protected with a password when DEMO_PASSWORD is set.
+import { VOICES, defaultVoice, isVoice, perVideo } from './voices.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,7 +37,7 @@ function allowed(req, res) {
 
 // Re-record videos from their saved steps (no Claude planning, so under a cent each). Used after an
 // app release: from the dashboard, or by POST /videos/rerecord from a deploy hook or schedule.
-export async function queueRerecords(db, filter = {}, source = 'rerecord') {
+export async function queueRerecords(db, filter = {}, source = 'rerecord', voice) {
   const vids = await db.collection('videos').find(filter, { projection: { slug: 1, storyboard: 1 } }).toArray();
   // Videos made before steps were stored on the video itself: use the latest version's saved steps.
   for (const v of vids.filter((x) => !x.storyboard)) {
@@ -47,13 +48,21 @@ export async function queueRerecords(db, filter = {}, source = 'rerecord') {
   const todo = vids.filter((v) => !busy.has(v.slug));
   if (todo.length) {
     await db.collection('jobs').insertMany(todo.map((v, i) => ({
-      status: 'queued', storyboard: v.storyboard, rerecordOf: v.slug, attempts: 0, createdAt: new Date(Date.now() + i), source,
+      status: 'queued', storyboard: v.storyboard, rerecordOf: v.slug, attempts: 0, createdAt: new Date(Date.now() + i), source, ...(voice ? { voice } : {}),
     })));
   }
   return todo.length;
 }
 
 const redirect = (res, to = '/') => res.writeHead(303, { Location: to }).end();
+
+// Voice dropdown for the request forms; the service default is preselected.
+const pickVoice = (form) => (isVoice(form.voice) ? { voice: form.voice } : {});
+function voiceSelect(id) {
+  const def = defaultVoice().id;
+  return `<div style="flex:0;min-width:230px"><label for="${id}"><strong>Voice</strong> <a class="meta" href="/ui/voices">listen</a></label><select id="${id}" name="voice">${VOICES.map((o) =>
+    `<option value="${o.id}"${o.id === def ? ' selected' : ''}>${esc(o.label)} · ${esc(perVideo(o))}</option>`).join('')}</select></div>`;
+}
 
 function page({ sbs, jobs, videos, busy, error, logins = [] }) {
   const statusPill = (s) => `<span class="pill ${s}">${esc(s)}</span>`;
@@ -76,6 +85,7 @@ th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vert
 .pill.done,.pill.approved{background:#ecfdf3;color:#067647}.pill.failed{background:#fef3f2;color:#b42318}.pill.draft{background:#f2f4f7;color:#344054}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}.vid img{width:100%;border-radius:8px;border:1px solid var(--line);display:block}
 .vid h3{font-size:16px;margin:10px 0 4px}.meta{color:var(--muted);font-size:13px}.actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.rerec{display:flex;gap:4px;align-items:center}.rerec select{width:auto;max-width:150px;font-size:12px;padding:5px 6px;margin:0}
 a.btn{display:inline-block;padding:7px 14px;border-radius:8px;border:1px solid var(--line);color:var(--ink);text-decoration:none;background:#fff}
 .err{background:#fef3f2;border:1px solid #fecdca;color:#b42318;padding:10px 14px;border-radius:8px;margin-bottom:14px}
 .empty{color:var(--muted)}
@@ -88,6 +98,7 @@ ${error ? `<div class="err">${esc(error)}</div>` : ''}
 <div class="row" style="margin-top:12px"><div><label for="start"><strong>Start at</strong> <span class="meta">website address; leave empty to use the sample billing app</span></label>
 <input id="start" name="startUrl" type="text" inputmode="url" autocomplete="off" placeholder="en.wikipedia.org"></div>
 ${logins.length ? `<div style="flex:0;min-width:200px"><label for="login"><strong>Signed in as</strong></label><select id="login" name="login"><option value="">Not signed in</option>${logins.map((l) => `<option value="${esc(l.name)}">${esc(l.name)}</option>`).join('')}</select></div>` : ''}
+${voiceSelect('voice-p')}
 <div style="flex:0;white-space:nowrap;padding-bottom:9px"><label class="inline meta"><input type="checkbox" name="planOnly" value="1"> Plan only</label></div>
 <div style="flex:0"><button type="submit">Plan and record</button></div></div>
 <p class="meta">Claude works out the clicks on the real site, then the video is recorded. Takes about 2–4 minutes. Sites that show a robot check won't work, and it never types passwords or completes purchases. For apps that need a login (like Miter staging), add a saved login below and pick it under "Signed in as"; leave "Start at" empty to start where you logged in.</p>
@@ -95,6 +106,7 @@ ${logins.length ? `<div style="flex:0;min-width:200px"><label for="login"><stron
 <div class="card"><form method="post" action="/ui/make"><div class="row"><div>
 <label for="sb"><strong>Or pick a ready-made storyboard</strong></label>
 <select id="sb" name="file">${sbs.map((s) => `<option value="${esc(s.file)}">${esc(s.title)} (${s.scenes.length} steps)</option>`).join('')}</select></div>
+${voiceSelect('voice-s')}
 <div style="flex:0"><button type="submit">Make video</button></div></div>
 <details><summary>Or paste your own storyboard (JSON)</summary><textarea name="custom" placeholder='{"id":"my-video","title":"...","startUrl":"/#/dashboard","scenes":[...]}'></textarea>
 <p class="meta">Steps can click, fill, select, pause or expect, targeting elements by role and name, label, test id or text. It runs against APP_URL, or the bundled sample app.</p></details>
@@ -129,11 +141,11 @@ ${jobs.map((j) => {
 <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap"><h2>Video library</h2>
 ${videos.length ? `<form method="post" action="/ui/rerecord-all" onsubmit="return confirm('Re-record every video from its saved steps? No Claude cost; takes about 2 minutes per video.')"><button class="ghost">Re-record all</button></form>` : ''}</div>
 ${videos.length ? `<div class="grid">${videos.map((v) => `<div class="card vid"><a href="/v/${esc(v.slug)}"><img src="/videos/${esc(v.slug)}/thumbnail?v=${v.version}" alt=""></a>
-<h3>${esc(v.title)}</h3><div class="meta">${statusPill(v.status)} &nbsp;v${v.version} &middot; ${v.durationSec}s &middot; ${(v.sizeBytes / 1e6).toFixed(1)} MB &middot; ${v.narrated ? 'narrated' : 'captions only'}${v.trimmedSec ? ` &middot; ${v.trimmedSec}s dead time trimmed` : ''}${v.lastCost ? ` &middot; $${v.lastCost.total.toFixed(3)}` : ''}</div>
+<h3>${esc(v.title)}</h3><div class="meta">${statusPill(v.status)} &nbsp;v${v.version} &middot; ${v.durationSec}s &middot; ${(v.sizeBytes / 1e6).toFixed(1)} MB &middot; ${v.narrated ? `narrated${v.voiceName ? ` by ${esc(v.voiceName.replace(/ \(.*/, ''))}` : ''}` : 'captions only'}${v.trimmedSec ? ` &middot; ${v.trimmedSec}s dead time trimmed` : ''}${v.lastCost ? ` &middot; $${v.lastCost.total.toFixed(3)}` : ''}</div>
 ${v.needsAttention ? `<div class="err" style="margin:10px 0 0;font-size:13px"><strong>Steps no longer work</strong> (the app probably changed): ${esc(v.needsAttention.slice(0, 200))}</div>` : ''}
 ${v.qa?.fixes?.length ? `<div class="meta" style="margin-top:6px;color:#5925dc">↻ Fixed automatically: ${esc(v.qa.fixes.join(' '))}</div>` : ''}
 ${v.qa && !v.qa.ok ? `<details style="margin-top:8px"><summary style="color:#b54708">⚠ ${v.qa.warnings.length} quality warning${v.qa.warnings.length > 1 ? 's' : ''}</summary><ul class="meta" style="margin:6px 0 0;padding-left:18px">${v.qa.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></details>` : v.qa ? '<div class="meta" style="margin-top:6px;color:#067647">✓ Quality checks passed</div>' : ''}
-<div class="actions"><a class="btn" href="/v/${esc(v.slug)}">Watch</a><a class="btn" href="/videos/${esc(v.slug)}/video?v=${v.version}" download="${esc(v.slug)}.mp4">MP4</a>${v.storyboard ? `<a class="btn" href="/videos/${esc(v.slug)}/sop.md?v=${v.version}" download="${esc(v.slug)}-sop.md">SOP</a>` : ''}<form method="post" action="/ui/rerecord/${esc(v.slug)}"><button class="ghost" title="Record again from the saved steps (no Claude cost)">Re-record</button></form>
+<div class="actions"><a class="btn" href="/v/${esc(v.slug)}">Watch</a><a class="btn" href="/videos/${esc(v.slug)}/video?v=${v.version}" download="${esc(v.slug)}.mp4">MP4</a>${v.storyboard ? `<a class="btn" href="/videos/${esc(v.slug)}/sop.md?v=${v.version}" download="${esc(v.slug)}-sop.md">SOP</a>` : ''}<form method="post" action="/ui/rerecord/${esc(v.slug)}" class="rerec"><button class="ghost" title="Record again from the saved steps (no Claude cost)">Re-record</button><select name="voice" aria-label="Voice for the re-record" title="Voice for the re-record"><option value="">same voice</option>${VOICES.map((o) => `<option value="${o.id}">${esc(o.label.replace(/ \(.*/, ''))} · ${esc(o.label.match(/\((.*)\)/)?.[1] || '')}</option>`).join('')}</select></form>
 ${v.status !== 'approved' ? `<form method="post" action="/ui/approve/${esc(v.slug)}"><button class="ghost">Approve</button></form>` : ''}</div></div>`).join('')}</div>` : '<p class="empty">No videos yet. Make one above.</p>'}
 </main></body></html>`;
 }
@@ -234,7 +246,7 @@ export async function handleDashboard(db, req, res, url) {
     } catch (e) {
       return redirect(res, `/?error=${encodeURIComponent(`Could not read storyboard: ${e.message}`)}`);
     }
-    await db.collection('jobs').insertOne({ status: 'queued', storyboard, attempts: 0, createdAt: new Date(), source: 'dashboard' });
+    await db.collection('jobs').insertOne({ status: 'queued', storyboard, attempts: 0, createdAt: new Date(), source: 'dashboard', ...pickVoice(form) });
     return redirect(res);
   }
   if (req.method === 'POST' && p === '/ui/prompt') {
@@ -249,7 +261,7 @@ export async function handleDashboard(db, req, res, url) {
     if (startUrl && !/^https?:\/\//i.test(startUrl)) startUrl = `https://${startUrl}`;
     await db.collection('jobs').insertOne({
       type: 'prompt', status: 'queued', prompt, startUrl: startUrl || '/#/dashboard', ...(login ? { login } : {}),
-      planOnly: form.planOnly === '1', attempts: 0, createdAt: new Date(), source: 'dashboard',
+      planOnly: form.planOnly === '1', attempts: 0, createdAt: new Date(), source: 'dashboard', ...pickVoice(form),
     });
     return redirect(res);
   }
@@ -355,7 +367,8 @@ export async function handleDashboard(db, req, res, url) {
     return true;
   }
   if (req.method === 'POST' && (p.startsWith('/ui/rerecord/') || p === '/ui/rerecord-all')) {
-    const n = await queueRerecords(db, p === '/ui/rerecord-all' ? {} : { slug: decodeURIComponent(p.split('/')[3]) }, 'dashboard');
+    const form = await readForm(req);
+    const n = await queueRerecords(db, p === '/ui/rerecord-all' ? {} : { slug: decodeURIComponent(p.split('/')[3]) }, 'dashboard', pickVoice(form).voice);
     if (!n) return redirect(res, `/?error=${encodeURIComponent('Nothing to re-record: older videos made before steps were saved need to be made again once.')}`);
     return redirect(res);
   }

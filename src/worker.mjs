@@ -18,8 +18,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // (charged by the second, so the share used by one job = its seconds x $25 / seconds in a month).
 const VOICE_USD_PER_CHAR = Number(process.env.TTS_USD_PER_MCHAR || 13) / 1e6;
 const SERVER_USD_PER_SEC = Number(process.env.SERVER_USD_PER_MONTH || 25) / (730 * 3600);
-function costOf({ planUsd = 0, voiceChars = 0, serverSec = 0 }) {
-  const c = { planning: planUsd, voice: voiceChars * VOICE_USD_PER_CHAR, server: serverSec * SERVER_USD_PER_SEC };
+function costOf({ planUsd = 0, voiceChars = 0, voiceUsd, serverSec = 0 }) {
+  const c = { planning: planUsd, voice: voiceUsd ?? voiceChars * VOICE_USD_PER_CHAR, server: serverSec * SERVER_USD_PER_SEC };
   c.total = c.planning + c.voice + c.server;
   for (const k of Object.keys(c)) c[k] = Math.round(c[k] * 1e5) / 1e5;
   return { ...c, voiceChars, serverSec: Math.round(serverSec) };
@@ -75,6 +75,7 @@ export async function startWorker() {
           const plan = await authorStoryboard({ prompt: job.prompt, startUrl: job.startUrl, baseUrl, storageState, log });
           storyboard = plan.storyboard;
           if (loginName) storyboard.login = loginName;
+          if (job.voice) storyboard.voice = job.voice;
           await jobs.updateOne({ _id: job._id }, { $set: { storyboard, planUsage: plan.usage } });
           if (job.planOnly) {
             const cost = costOf({ planUsd: plan.usage.costUsd, serverSec: (Date.now() - jobStart) / 1000 });
@@ -84,11 +85,12 @@ export async function startWorker() {
             continue;
           }
         }
+        if (job.voice) storyboard = { ...storyboard, voice: job.voice }; // saved with the video, so re-records keep it
         await jobs.updateOne({ _id: job._id }, { $set: { stage: 'recording' } });
         const saved = await makeVideo({ storyboard, baseUrl, jobId: job._id, storageState, log });
         const fresh = await jobs.findOne({ _id: job._id }, { projection: { planUsage: 1 } });
         // Planning is counted once, on the job that planned it ("Record it" jobs reuse a paid-for plan).
-        const cost = costOf({ planUsd: fresh?.planUsage?.costUsd || 0, voiceChars: saved.voiceChars, serverSec: (Date.now() - jobStart) / 1000 });
+        const cost = costOf({ planUsd: fresh?.planUsage?.costUsd || 0, voiceChars: saved.voiceChars, voiceUsd: saved.voiceUsd, serverSec: (Date.now() - jobStart) / 1000 });
         await jobs.updateOne({ _id: job._id }, { $set: { status: 'done', stage: null, finishedAt: new Date(), result: saved, cost } });
         await db.collection('videos').updateOne({ slug: saved.slug }, { $set: { lastCost: cost } });
         state.current = null;

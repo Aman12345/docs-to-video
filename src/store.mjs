@@ -72,7 +72,7 @@ export async function saveVideo(db, { storyboard, composed, jobId }) {
         slug, title: storyboard.title, description: storyboard.description,
         answersQuestions: storyboard.answersQuestions, tags: storyboard.tags, guide: storyboard.guide,
         transcript: composed.transcript, chapters: composed.chapters, durationSec: composed.durationSec,
-        narrated: composed.narrated, files, sizeBytes, version, status: 'draft', updatedAt: now,
+        narrated: composed.narrated, voiceName: composed.voiceName || null, files, sizeBytes, version, status: 'draft', updatedAt: now,
         storyboard, qa: composed.qa, trimmedSec: composed.trimmedSec,
       },
       $unset: { needsAttention: '' },

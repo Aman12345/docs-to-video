@@ -119,6 +119,14 @@ Captions sit at the bottom, and move to the top while the control being used is 
 screen, so they never cover it. Zooms work straight from the 1080p recording (no upscaling), so text stays
 sharp; frames outside a zoom are passed through untouched.
 
+### Voices
+
+Pick a voice per video in the dashboard (both request forms, and next to Re-record), or pass `"voice"` to
+`POST /prompts`, `POST /jobs` or `POST /videos/rerecord`: `paul` (Voxtral, about 0.8¢ a video), `sarah-v4`
+(ElevenLabs v4, about 4.8¢) or `sarah-turbo` (same Sarah voice on v4 Turbo, about 2.4¢). The choice is saved with
+the video, so re-recording keeps it. The default is whatever TTS_MODEL / TTS_VOICE are set to. If a voice
+fails, the video falls back to the default voice instead of losing narration. Voices are listed in src/voices.mjs.
+
 ### Quality checks and automatic fixes
 
 Every finished video is checked. Warnings have codes, and some are fixed automatically, once each:
