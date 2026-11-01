@@ -84,7 +84,7 @@ ${jobs.map((j) => {
   const steps = j.storyboard && j.type === 'prompt' ? ` &middot; <a href="/ui/jobs/${j._id}/storyboard">view steps</a>` : '';
   const result = j.status === 'done' ? `v${j.result?.version}, ${(j.result?.sizeBytes / 1e6).toFixed(1)} MB${cost}${steps}`
     : j.status === 'planned' ? `planned${cost}${steps} <form method="post" action="/ui/record/${j._id}" style="display:inline"><button class="ghost" style="padding:3px 10px;margin-left:6px">Record it</button></form>`
-    : j.status === 'failed' ? esc((j.error || '').split('\n')[0].slice(0, 160))
+    : j.status === 'failed' ? `${esc((j.error || '').split('\n')[0].slice(0, 160))} <form method="post" action="/ui/retry/${j._id}" style="display:inline"><button class="ghost" style="padding:3px 10px;margin-left:6px">Retry</button></form>`
     : j.status === 'running' ? `${j.stage === 'planning' ? 'Claude is planning the steps...' : 'recording...'}` : '';
   return `<tr><td>${esc(j.storyboard?.title || j.prompt)}${j.type === 'prompt' ? ' <span class="meta">(from prompt)</span>' : ''}</td><td>${statusPill(j.status)}</td><td class="meta">${ago(j.createdAt)}</td><td class="meta">${result}</td></tr>`;
 }).join('')}
@@ -135,6 +135,14 @@ export async function handleDashboard(db, req, res, url) {
     const planned = await db.collection('jobs').findOne({ _id: new ObjectId(p.split('/')[3]) });
     if (!planned?.storyboard) return redirect(res, `/?error=${encodeURIComponent('That plan was not found.')}`);
     await db.collection('jobs').insertOne({ status: 'queued', storyboard: planned.storyboard, attempts: 0, createdAt: new Date(), source: 'dashboard' });
+    return redirect(res);
+  }
+  if (req.method === 'POST' && p.startsWith('/ui/retry/')) {
+    // Re-queue a failed job. A prompt job keeps Claude's plan if it has one, so it isn't paid for twice.
+    await db.collection('jobs').updateOne(
+      { _id: new ObjectId(p.split('/')[3]), status: 'failed' },
+      { $set: { status: 'queued', attempts: 0, createdAt: new Date() }, $unset: { error: '', stage: '' } },
+    );
     return redirect(res);
   }
   if (req.method === 'GET' && p.startsWith('/ui/jobs/') && p.endsWith('/storyboard')) {

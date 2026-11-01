@@ -52,7 +52,7 @@ async function narrate(timeline, outDir) {
     const res = await fetch('https://openrouter.ai/api/v1/audio/speech', {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: process.env.TTS_MODEL || 'openai/gpt-4o-mini-tts-2025-12-15', input: s.narration, voice: process.env.TTS_VOICE || 'nova', response_format: 'mp3' }),
+      body: JSON.stringify({ model: process.env.TTS_MODEL || 'mistralai/voxtral-mini-tts-3-0', input: s.narration, voice: process.env.TTS_VOICE || 'en_paul_neutral', response_format: 'mp3' }),
     });
     if (!res.ok) throw new Error(`TTS failed: ${res.status} ${await res.text()}`);
     const file = path.join(outDir, `voice-${i}.mp3`);
@@ -79,7 +79,9 @@ export async function compose({ rawPath, timeline, outDir }) {
     `subtitles=${srtPath}:force_style='${style}'`,
   ].join(',');
 
-  const voice = await narrate(timeline, outDir);
+  // A voice problem should never cost the whole video: fall back to captions only.
+  let voice = [];
+  try { voice = await narrate(timeline, outDir); } catch (e) { console.error(`Narration skipped: ${e.message.slice(0, 200)}`); }
   const args = ['-y', '-i', rawPath];
   voice.forEach((v) => args.push('-i', v.file));
   if (voice.length) {
