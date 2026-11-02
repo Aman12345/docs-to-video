@@ -31,7 +31,11 @@ export async function chat(messages, usage, { model = authorModel(), maxTokens =
       usage: { include: true },
     }),
   });
-  if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 300);
+    if (res.status === 402 || /credit|limit exceeded/i.test(body)) throw new Error(`OpenRouter credits ran out (${res.status}): add credits on openrouter.ai, or raise the API key's credit limit, then select Retry. ${body.slice(0, 120)}`);
+    throw new Error(`OpenRouter ${res.status}: ${body}`);
+  }
   const data = await res.json();
   usage.calls += 1;
   usage.costUsd += Number(data.usage?.cost || 0);

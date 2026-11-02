@@ -133,7 +133,7 @@ export async function startWorker() {
           await new Promise((ok) => { up.on('finish', ok); up.on('error', ok); up.end(err.screenshot); });
           failShot = up.id;
         }
-        const retry = job.attempts < 2 && !/Claude stopped|AI stopped|OPENROUTER_API_KEY|did not find any steps|Saved login|test data/.test(err.message);
+        const retry = job.attempts < 2 && !/Claude stopped|AI stopped|OPENROUTER_API_KEY|did not find any steps|Saved login|test data|credits ran out/.test(err.message);
         await jobs.updateOne({ _id: job._id }, { $set: { status: retry ? 'queued' : 'failed', error: err.message.slice(0, 2000), ...(failShot ? { failShot } : {}) } });
         if (!retry) lastFailed = true;
         state.current = null;

@@ -9,7 +9,7 @@ const LAUNCH = { handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false 
 import { locate, perform, performPageStep } from './locate.mjs';
 import { planCheck, CHECK_CHAPTER } from './check.mjs';
 import { get, guidelinesText } from './settings.mjs';
-import { authorModel, chat, parseJson, snapshot, describe, newUsage } from './ai.mjs';
+import { authorModel, repairModel, chat, parseJson, snapshot, describe, newUsage } from './ai.mjs';
 
 const MAX_ACTIONS = 22; // Miter AI flows need room: popups, navigation, form, chat, approve, waits
 const MAX_ERRORS = 4;
@@ -159,10 +159,27 @@ async function runAgent(page, { goal, system, model, usage, log, label = 'plan',
   return { actions, end: { do: 'done', why: 'step limit reached' } };
 }
 
-export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState, log = console.log }) {
+// Long requests (e.g. a pasted help article) are condensed once into a short goal plus key facts. The planner
+// sends the request with every step, so a 5,000-character article would otherwise be paid for dozens of times.
+async function condense(prompt, usage, log) {
+  const text = String(prompt).replace(/<[^>]+>/g, ' ').replace(/https?:\/\/\S+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (text.length <= 1200) return text;
+  const r = parseJson(await chat([
+    { role: 'system', content: 'You turn a long request for a how-to video into a short brief. Reply with ONLY one JSON object.' },
+    { role: 'user', content: `Request (may include a pasted help article):\n<<<${text.slice(0, 20000)}>>>\n\nReply: {"goal": "one sentence: what the video should show", "facts": ["up to 8 short facts from the text the video needs: where things are, labels, options, rules"]}` },
+  ], usage, { model: repairModel(), maxTokens: 700 }));
+  const brief = `${r.goal || text.slice(0, 300)}${Array.isArray(r.facts) && r.facts.length ? `\nKey facts:\n${r.facts.slice(0, 8).map((f) => `- ${f}`).join('\n')}` : ''}`;
+  log(`plan: condensed a ${text.length}-character request into a short brief`);
+  return brief;
+}
+
+export async function authorStoryboard({ prompt: fullPrompt, startUrl, baseUrl, storageState, log = console.log }) {
   const start = new URL(startUrl || '/', baseUrl).toString();
   const model = authorModel();
   const usage = newUsage(model);
+  const prompt = await condense(fullPrompt, usage, log);
+  // Setup and cleanup are mechanical: the cheaper takeover model does them.
+  const helper = repairModel();
   let actions = [];
   let checkPlan = null;
   let setup = [], cleanup = [], setupWhy = '';
@@ -181,7 +198,7 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
       if (!storageState) throw new Error(`The AI stopped: it needs test data first (${run.end.why}), which is only prepared in signed-in apps.`);
       setupWhy = String(run.end.why || 'test data').slice(0, 300);
       log(`plan: preparing test data off-camera first: ${setupWhy}`);
-      const prep = await runAgent(page, { goal: `Prepare this test data: ${setupWhy}. (The video will then show: ${prompt})`, system: SETUP_SYSTEM + guidelinesText(), model, usage, log, label: 'setup', max: 25 });
+      const prep = await runAgent(page, { goal: `Prepare this test data: ${setupWhy}. (The video will then show: ${prompt.split('\n')[0]})`, system: SETUP_SYSTEM, model: helper, usage, log, label: 'setup', max: 25 });
       if (prep.end.do !== 'done') throw new Error(`The AI stopped: it couldn't prepare the test data this video needs (${prep.end.why || setupWhy}).`);
       setup = prep.actions;
       await page.goto(start, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -201,7 +218,7 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
     const created = [setupWhy && `the test data prepared for the video (${setupWhy})`, run.end.created].filter(Boolean).join('; ');
     if (storageState && created) {
       try {
-        const done = await runAgent(page, { goal: `Delete or archive these test records: ${created}.`, system: CLEANUP_SYSTEM, model, usage, log, label: 'cleanup', max: 15 });
+        const done = await runAgent(page, { goal: `Delete or archive these test records: ${created}.`, system: CLEANUP_SYSTEM, model: helper, usage, log, label: 'cleanup', max: 15 });
         cleanup = done.end.do === 'done' ? done.actions : [];
       } catch (e) { log(`cleanup: skipped (${e.message.split('\n')[0]})`); }
     }
@@ -234,9 +251,9 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
     steps: [...checkPlan.reveal.map((a) => ({ ...a, optional: true })), { do: 'show', target: checkPlan.show }, { do: 'pause', ms: 1500 }] });
 
   const storyboard = {
-    id: slugify(outline.title || prompt),
-    title: outline.title || prompt,
-    description: outline.description || prompt,
+    id: slugify(outline.title || prompt.split('\n')[0]),
+    title: outline.title || prompt.split('\n')[0].slice(0, 100),
+    description: outline.description || prompt.split('\n')[0].slice(0, 200),
     answersQuestions: outline.answersQuestions || [],
     intro: typeof outline.intro === 'string' ? outline.intro : undefined,
     outro: typeof outline.outro === 'string' ? outline.outro : undefined,
@@ -244,7 +261,7 @@ export async function authorStoryboard({ prompt, startUrl, baseUrl, storageState
     tags: { source: 'prompt' },
     ...(setup.length ? { setup: setup.map(toStep).map(({ zoom, ...st }) => st), setupWhy } : {}),
     ...(cleanup.length ? { cleanup: cleanup.map(toStep).map(({ zoom, ...st }) => st) } : {}),
-    prompt,
+    prompt: String(fullPrompt).length > 1200 ? prompt : fullPrompt,
     startUrl: startUrl || '/',
     scenes,
   };
