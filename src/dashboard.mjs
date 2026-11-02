@@ -709,6 +709,10 @@ ${rows.map(card).join('')}</main></body></html>`);
       const form = await readForm(req);
       const note = (form.note || '').trim().slice(0, 1000);
       if (!note || !v.storyboard) return redirect(res, `/ui/review/${encodeURIComponent(slug)}`);
+      // A double tap (or a resubmitted form) shouldn't start the same change twice.
+      if (await db.collection('jobs').countDocuments({ rerecordOf: slug, status: { $in: ['queued', 'running'] } })) {
+        return redirect(res, `/?error=${encodeURIComponent('Changes for that video are already being made; see Jobs below.')}`);
+      }
       const usage = newUsage(repairModel());
       let revised;
       try { revised = await reviseStoryboard({ storyboard: v.storyboard, note, usage, scriptRules: SCRIPT_RULES }); } catch (e) {

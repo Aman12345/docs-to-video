@@ -9,7 +9,7 @@ const LAUNCH = { handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false 
 import { locate, perform, performPageStep } from './locate.mjs';
 import { planCheck, CHECK_CHAPTER } from './check.mjs';
 import { get, guidelinesText } from './settings.mjs';
-import { authorModel, repairModel, chat, parseJson, snapshot, describe, newUsage } from './ai.mjs';
+import { authorModel, repairModel, chat, chatJson, parseJson, snapshot, describe, newUsage } from './ai.mjs';
 
 const MAX_ACTIONS = 30; // end-to-end lessons need room: popups, navigation, forms, choices, waits
 const MAX_ERRORS = 4;
@@ -191,7 +191,7 @@ app, you decide what a complete lesson covers so a new user could do the whole t
 Reply with ONLY one JSON object.`;
 async function planLesson(prompt, { startUrl, signedIn, usage, model, log }) {
   try {
-    const r = parseJson(await chat([
+    const r = await chatJson([
       { role: 'system', content: LESSON_SYSTEM },
       { role: 'user', content: [
         `Request: <<<${prompt}>>>`,
@@ -208,7 +208,7 @@ async function planLesson(prompt, { startUrl, signedIn, usage, model, log }) {
         guidelinesText(),
         'Reply: {"outcome": "what the viewer can do after watching", "stages": ["short stage", "..."], "choices": [{"what": "destination", "basis": "where you\'re travelling", "example": "Paris"}], "end": "what is on screen when the video ends", "finish": "what the viewer does themselves after the video\'s last screen, or \\"\\""}',
       ].filter(Boolean).join('\n') },
-    ], usage, { model, maxTokens: 900 }));
+    ], usage, { model, maxTokens: 1500 });
     const lesson = {
       outcome: String(r.outcome || '').slice(0, 200),
       stages: (Array.isArray(r.stages) ? r.stages : []).slice(0, 8).map((s) => String(s).slice(0, 120)),
@@ -297,10 +297,10 @@ export async function authorStoryboard({ prompt: fullPrompt, startUrl, baseUrl, 
 
   // Second pass: group the working actions into a few titled scenes with narration.
   const list = actions.map((a, i) => `${i}. ${describe(a)} | narration idea: ${a.narration || ''}`).join('\n');
-  const outline = parseJson(await chat([
+  const outline = await chatJson([
     { role: 'system', content: 'You write short how-to video storyboards. Reply with ONLY one JSON object.' },
     { role: 'user', content: `Goal of the video: ${brief}\n\nThese browser actions were performed, in order:\n${list}\n\n${SCRIPT_RULES}\n\nGroup them into 2 to 7 scenes (steps), in order, using every action index exactly once; follow the lesson plan's stages where you can. Where the viewer makes their own choice, say what to base it on and that ours is an example.${lesson?.finish ? ` The last scene's narration ends by telling the viewer how to finish: ${lesson.finish}.` : ''}${guidelinesText()} Return:\n{"title": "short task-style title in sentence case, starting with a verb, e.g. Create a reimbursement (capitalise only names and product terms)", "description": "one sentence", "answersQuestions": ["3 ways a user might ask for this"], "intro": "spoken opening, max 20 words, following the intro rule", "checks": ["2-3 short things the viewer can check to confirm it worked"], "scenes": [{"chapter": "2-4 word step title", "narration": "1-2 short spoken sentences, max 25 words, following the narration rules", "steps": [0, 1]}]}` },
-  ], usage, { model, maxTokens: 1500 }));
+  ], usage, { model, maxTokens: 4000 });
 
   const used = new Set();
   let scenes = (outline.scenes || []).map((s) => ({

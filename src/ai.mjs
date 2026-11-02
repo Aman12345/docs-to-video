@@ -53,6 +53,18 @@ export async function chat(messages, usage, { model = authorModel(), maxTokens =
   return content;
 }
 
+// chat() + parseJson() for replies that must be one JSON object. If the reply is cut off or malformed (long
+// storyboards can outgrow the token limit), ask once more with twice the room instead of failing the whole job.
+export async function chatJson(messages, usage, { model, maxTokens = 900 } = {}) {
+  try {
+    return parseJson(await chat(messages, usage, { model, maxTokens }));
+  } catch (e) {
+    if (!/JSON/.test(e.message)) throw e;
+    const again = [...messages, { role: 'user', content: 'Your last reply was cut off or was not valid JSON. Reply again with the complete JSON object only, keeping text fields short.' }];
+    return parseJson(await chat(again, usage, { model, maxTokens: maxTokens * 2 }));
+  }
+}
+
 export function parseJson(text) {
   const s = text.indexOf('{'), e = text.lastIndexOf('}');
   if (s < 0 || e < s) throw new Error(`No JSON in model reply: ${text.slice(0, 200)}`);

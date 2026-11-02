@@ -9,7 +9,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { repairModel, reviewModel, chat, parseJson } from './ai.mjs';
+import { repairModel, reviewModel, chat, chatJson, parseJson } from './ai.mjs';
 import { guidelinesText } from './settings.mjs';
 import { lessonText } from './author.mjs';
 
@@ -105,7 +105,7 @@ export async function reviewVideo({ storyboard, stepFrames, outDir, usage, log =
     content.push({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${await small(f, outDir, i)}` } });
   }
   const model = reviewModel();
-  const reply = parseJson(await chat([{ role: 'system', content: SYSTEM + guidelinesText() }, { role: 'user', content }], usage, { model, maxTokens: 1500 }));
+  const reply = await chatJson([{ role: 'system', content: SYSTEM + guidelinesText() }, { role: 'user', content }], usage, { model, maxTokens: 2500 });
   const findings = (Array.isArray(reply.findings) ? reply.findings : [])
     .filter((f) => REVIEW_CODES[f?.code] && Number.isInteger(Number(f.step)) && Number(f.step) >= 1 && Number(f.step) <= scenes.length)
     .map((f) => ({ step: Number(f.step), code: f.code, note: String(f.note || REVIEW_CODES[f.code]).slice(0, 300),
