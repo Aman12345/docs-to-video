@@ -18,6 +18,12 @@ export async function chat(messages, usage, { model = authorModel(), maxTokens =
   // OpenAI GPT models think before answering, and that thinking counts toward max_tokens: keep the effort
   // low (these are small, one-step decisions) and leave room so the answer isn't cut off.
   const reasoning = model.startsWith('openai/');
+  // Prompt caching for Anthropic models: the long instructions (system prompt) are the same on every step of
+  // a planning run, so mark them cacheable; repeats then cost about a tenth. (Other providers cache automatically.)
+  if (model.startsWith('anthropic/')) {
+    messages = messages.map((m) => (m.role === 'system' && typeof m.content === 'string' && m.content.length > 3000
+      ? { ...m, content: [{ type: 'text', text: m.content, cache_control: { type: 'ephemeral' } }] } : m));
+  }
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Title': 'docs-to-video' },
@@ -40,6 +46,7 @@ export async function chat(messages, usage, { model = authorModel(), maxTokens =
   usage.calls += 1;
   usage.costUsd += Number(data.usage?.cost || 0);
   usage.inputTokens += data.usage?.prompt_tokens || 0;
+  usage.cachedTokens = (usage.cachedTokens || 0) + (data.usage?.prompt_tokens_details?.cached_tokens || 0);
   usage.outputTokens += data.usage?.completion_tokens || 0;
   const content = data.choices?.[0]?.message?.content || '';
   if (!content) throw new Error(`${model} returned an empty reply (finish reason: ${data.choices?.[0]?.finish_reason || 'unknown'}).`);

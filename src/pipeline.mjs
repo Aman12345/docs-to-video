@@ -176,10 +176,20 @@ export async function makeVideo({ storyboard, baseUrl, jobId, storageState, log 
             reRecord = true; checkNote = ending.request || ending.note;
             reviewFixes.push(`The AI editor had the ending redone: ${checkNote}`);
           }
+          // Only the lines that changed get a new voice (the rest of the clips stay as they are).
+          const before = [...texts];
           texts.splice(0, texts.length, intro, ...storyboard.scenes.map((sc) => sc.narration || ''), outro);
-          if (voiced && narr.length) {
-            const again = await synthesizeVoice(texts, await fs.mkdtemp(path.join(workDir, 'voice-')), log, clips.voice || wanted);
-            if (again.length === texts.length) { clips = Object.assign(again, { voice: again.voice || clips.voice }); voiceChars += texts.reduce((n, x) => n + x.length, 0); }
+          if (voiced && narr.length && clips.length === texts.length) {
+            const changedIdx = texts.map((t, i) => (t !== before[i] ? i : -1)).filter((i) => i >= 0);
+            if (changedIdx.length) {
+              const dir = await fs.mkdtemp(path.join(workDir, 'voice-'));
+              const fresh = await synthesizeVoice(changedIdx.map((i) => texts[i]), dir, log, clips.voice || wanted);
+              if (fresh.length === changedIdx.length) {
+                const next = [...clips];
+                changedIdx.forEach((i, k) => { next[i] = fresh[k]; voiceChars += texts[i].length; });
+                clips = Object.assign(next, { voice: clips.voice });
+              }
+            }
           }
           if (reRecord) take = await recordIt(slow, checkNote);
           composed = await editIt(take, clips);
