@@ -11,6 +11,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { repairModel, reviewModel, chat, parseJson } from './ai.mjs';
 import { guidelinesText } from './settings.mjs';
+import { lessonText } from './author.mjs';
 
 export const REVIEW_CODES = {
   'narration-mismatch': 'The narration doesn\'t match what the screen shows',
@@ -42,6 +43,10 @@ Judge what they need:
 - Does it explain the choices a viewer has to make? If it picks one option from a list (an approver type, a
   policy rule) as if it were the only one, viewers will be confused: the fix is to show the options and say
   briefly when each is used.
+- Does it cover the whole task, end to end? If a lesson plan is given, check every stage is shown through to its
+  end point, and that the last narration tells the viewer how to finish anything the video stops before (e.g.
+  payment). If it stops early or skips a stage (searches hotels but never shows choosing a room or checkout),
+  that's code missing-context with fix "replan", and "request" names the missing stages.
 - Does it skip anything they'd need to know or do (a step done off screen, a reason that isn't obvious)?
 - Does it follow the team guidelines below?
 - Is any real-looking personal data readable (SSN, bank or card number, password)? Test data like
@@ -90,6 +95,7 @@ export async function reviewVideo({ storyboard, stepFrames, outDir, usage, log =
     `Video: ${storyboard.title}`,
     `Request: "${storyboard.prompt || storyboard.title}"`,
     storyboard.description ? `Description: ${storyboard.description}` : '',
+    lessonText(storyboard.lesson),
     'Steps (title | actions performed | narration):',
     ...scenes.map((s, i) => `${i + 1}. ${s.check ? '[Check your work ending] ' : ''}${s.chapter} | ${act(s)} | "${s.narration || ''}"`),
     'Screenshots follow, one per step, in order.',

@@ -11,7 +11,7 @@ import { planCheck, CHECK_CHAPTER } from './check.mjs';
 import { get, guidelinesText } from './settings.mjs';
 import { authorModel, repairModel, chat, parseJson, snapshot, describe, newUsage } from './ai.mjs';
 
-const MAX_ACTIONS = 22; // Miter AI flows need room: popups, navigation, form, chat, approve, waits
+const MAX_ACTIONS = 30; // end-to-end lessons need room: popups, navigation, forms, choices, waits
 const MAX_ERRORS = 4;
 
 const SYSTEM = `You operate a web browser to plan a short how-to video. You will be given a goal.
@@ -32,8 +32,11 @@ Reply with ONLY one JSON object describing the single next action:
 Rules:
 - Copy roles and names exactly from the snapshot. Prefer {"role","name"}. If several elements share
   the same role and name, add "nth": 0 (or the right index).
-- One action per reply. Keep the video short: reach the goal in as few actions as possible.
-- Reply {"do":"done"} as soon as the goal is visibly achieved on screen. If your actions created records (a report,
+- One action per reply. This is a training video: cover the whole task in the lesson plan, stage by stage, so
+  a new user could then do it alone. No detours, and no extra clicks a viewer wouldn't need.
+- The lesson plan was written from the request before anyone saw the app. Follow the app's real screens: skip
+  a stage the app doesn't have, add one the app needs.
+- Reply {"do":"done"} once the lesson plan's end point is on screen (not earlier). If your actions created records (a report,
   an expense, a policy), add "created": "what was created and its name", e.g. {"do":"done","created":"a report named Earnings - video test"}.
 - If the goal needs data that doesn't exist yet (e.g. a submitted, signed report to approve, an expense waiting
   for review), don't stop: reply {"do":"setup","why":"exactly what test data is needed"} and it will be prepared
@@ -178,11 +181,69 @@ async function condense(prompt, usage, log) {
   return brief;
 }
 
+// Lesson plan: before touching the app, the planning model works out what a complete lesson for this request
+// covers, the way a trainer would. "How do I book a hotel?" is search, dates, comparing and choosing a hotel,
+// a room, and checkout, not just a search. It also lists the choices that are the viewer's own (said as
+// examples in the video) and where the video must stop (payment, sending, submitting) with the narration
+// telling the viewer how to finish. The browser agent, the script writer and the AI editor all use it.
+const LESSON_SYSTEM = `You plan short training videos for software. Someone asks how to do something; before anyone opens the
+app, you decide what a complete lesson covers so a new user could do the whole task on their own afterwards.
+Reply with ONLY one JSON object.`;
+async function planLesson(prompt, { startUrl, signedIn, usage, model, log }) {
+  try {
+    const r = parseJson(await chat([
+      { role: 'system', content: LESSON_SYSTEM },
+      { role: 'user', content: [
+        `Request: <<<${prompt}>>>`,
+        `The video is recorded on: ${startUrl}${signedIn ? ' (a company\'s own business app, signed in with a test account)' : ''}`,
+        'Plan it:',
+        '- Cover the task end to end, the way the viewer would really do it, from where they start to where it\'s done.',
+        '  E.g. "how do I book a hotel" = search a destination, set dates and guests, compare and choose a hotel, choose',
+        '  a room, go to checkout; not just a search.',
+        '- List each decision the viewer makes with their own details (destination, dates, which hotel, employee, job,',
+        '  amount), what they\'d base it on, and a realistic example value the video will use.',
+        `- The video never spends money, enters payment or personal details, or reaches other people${signedIn ? '; in a company app it also never submits, approves or runs payroll, payments or timesheets unless the request asks to create a test record' : ''}.`,
+        '  Where the real task does that, the video goes up to that screen, shows it, and the narration says how to finish.',
+        '- Only what this task needs: 3-7 stages, no side tours.',
+        guidelinesText(),
+        'Reply: {"outcome": "what the viewer can do after watching", "stages": ["short stage", "..."], "choices": [{"what": "destination", "basis": "where you\'re travelling", "example": "Paris"}], "end": "what is on screen when the video ends", "finish": "what the viewer does themselves after the video\'s last screen, or \\"\\""}',
+      ].filter(Boolean).join('\n') },
+    ], usage, { model, maxTokens: 900 }));
+    const lesson = {
+      outcome: String(r.outcome || '').slice(0, 200),
+      stages: (Array.isArray(r.stages) ? r.stages : []).slice(0, 8).map((s) => String(s).slice(0, 120)),
+      choices: (Array.isArray(r.choices) ? r.choices : []).slice(0, 8).map((c) => ({ what: String(c?.what || '').slice(0, 60), basis: String(c?.basis || '').slice(0, 120), example: String(c?.example || '').slice(0, 80) })).filter((c) => c.what),
+      end: String(r.end || '').slice(0, 200),
+      finish: String(r.finish || '').slice(0, 200),
+    };
+    if (!lesson.stages.length) return null;
+    log(`plan: lesson plan: ${lesson.stages.join(' > ')}${lesson.finish ? ` (viewer finishes: ${lesson.finish})` : ''}`);
+    return lesson;
+  } catch (e) {
+    log(`plan: no lesson plan (${e.message.split('\n')[0].slice(0, 120)}); planning from the request alone`);
+    return null;
+  }
+}
+
+export function lessonText(lesson) {
+  if (!lesson?.stages?.length) return '';
+  return [
+    'Lesson plan (cover all of it, end to end):',
+    lesson.outcome && `Outcome: ${lesson.outcome}`,
+    `Stages: ${lesson.stages.map((s, i) => `${i + 1}. ${s}`).join(' ')}`,
+    lesson.choices?.length && `The viewer's own choices (use the example, and say it's an example and what to base the choice on): ${lesson.choices.map((c) => `${c.what}${c.basis ? ` (based on ${c.basis})` : ''}${c.example ? `, example: ${c.example}` : ''}`).join('; ')}`,
+    lesson.end && `Ends on: ${lesson.end}`,
+    lesson.finish && `The viewer finishes it themselves (the last narration tells them how): ${lesson.finish}`,
+  ].filter(Boolean).join('\n');
+}
+
 export async function authorStoryboard({ prompt: fullPrompt, startUrl, baseUrl, storageState, log = console.log }) {
   const start = new URL(startUrl || '/', baseUrl).toString();
   const model = authorModel();
   const usage = newUsage(model);
   const prompt = await condense(fullPrompt, usage, log);
+  const lesson = await planLesson(prompt, { startUrl: start, signedIn: !!storageState, usage, model, log });
+  const brief = [prompt, lessonText(lesson)].filter(Boolean).join('\n\n');
   // Setup and cleanup are mechanical: the cheaper takeover model does them.
   const helper = repairModel();
   let actions = [];
@@ -197,7 +258,7 @@ export async function authorStoryboard({ prompt: fullPrompt, startUrl, baseUrl, 
     await page.goto(start, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(1200);
 
-    let run = await runAgent(page, { goal: prompt, system, model, usage, log });
+    let run = await runAgent(page, { goal: brief, system, model, usage, log });
     // Missing data (e.g. no submitted report to approve): prepare it off-camera, then plan the video again.
     if (run.end.do === 'setup') {
       if (!storageState) throw new Error(`The AI stopped: it needs test data first (${run.end.why}), which is only prepared in signed-in apps.`);
@@ -208,7 +269,7 @@ export async function authorStoryboard({ prompt: fullPrompt, startUrl, baseUrl, 
       setup = prep.actions;
       await page.goto(start, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.waitForTimeout(1200);
-      run = await runAgent(page, { goal: prompt, system, model, usage, log, note: `Test data was just prepared for this video: ${setupWhy}. Use it; don't ask for setup again.` });
+      run = await runAgent(page, { goal: brief, system, model, usage, log, note: `Test data was just prepared for this video: ${setupWhy}. Use it; don't ask for setup again.` });
       if (run.end.do === 'setup') throw new Error(`The AI stopped: it still can't find the test data it needs (${run.end.why}).`);
     }
     if (run.end.do === 'fail') throw new Error(`The AI stopped: ${run.end.why || 'blocked'}`);
@@ -238,7 +299,7 @@ export async function authorStoryboard({ prompt: fullPrompt, startUrl, baseUrl, 
   const list = actions.map((a, i) => `${i}. ${describe(a)} | narration idea: ${a.narration || ''}`).join('\n');
   const outline = parseJson(await chat([
     { role: 'system', content: 'You write short how-to video storyboards. Reply with ONLY one JSON object.' },
-    { role: 'user', content: `Goal of the video: ${prompt}\n\nThese browser actions were performed, in order:\n${list}\n\n${SCRIPT_RULES}\n\nGroup them into 2 to 5 scenes (steps), in order, using every action index exactly once.${guidelinesText()} Return:\n{"title": "short task-style title in sentence case, starting with a verb, e.g. Create a reimbursement (capitalise only names and product terms)", "description": "one sentence", "answersQuestions": ["3 ways a user might ask for this"], "intro": "spoken opening, max 20 words, following the intro rule", "checks": ["2-3 short things the viewer can check to confirm it worked"], "scenes": [{"chapter": "2-4 word step title", "narration": "1-2 short spoken sentences, max 25 words, following the narration rules", "steps": [0, 1]}]}` },
+    { role: 'user', content: `Goal of the video: ${brief}\n\nThese browser actions were performed, in order:\n${list}\n\n${SCRIPT_RULES}\n\nGroup them into 2 to 7 scenes (steps), in order, using every action index exactly once; follow the lesson plan's stages where you can. Where the viewer makes their own choice, say what to base it on and that ours is an example.${lesson?.finish ? ` The last scene's narration ends by telling the viewer how to finish: ${lesson.finish}.` : ''}${guidelinesText()} Return:\n{"title": "short task-style title in sentence case, starting with a verb, e.g. Create a reimbursement (capitalise only names and product terms)", "description": "one sentence", "answersQuestions": ["3 ways a user might ask for this"], "intro": "spoken opening, max 20 words, following the intro rule", "checks": ["2-3 short things the viewer can check to confirm it worked"], "scenes": [{"chapter": "2-4 word step title", "narration": "1-2 short spoken sentences, max 25 words, following the narration rules", "steps": [0, 1]}]}` },
   ], usage, { model, maxTokens: 1500 }));
 
   const used = new Set();
@@ -264,6 +325,7 @@ export async function authorStoryboard({ prompt: fullPrompt, startUrl, baseUrl, 
     outro: typeof outline.outro === 'string' ? outline.outro : undefined,
     checks: Array.isArray(outline.checks) ? outline.checks.slice(0, 4).map(String) : undefined,
     tags: { source: 'prompt' },
+    ...(lesson ? { lesson } : {}),
     ...(setup.length ? { setup: setup.map(toStep).map(({ zoom, ...st }) => st), setupWhy } : {}),
     ...(cleanup.length ? { cleanup: cleanup.map(toStep).map(({ zoom, ...st }) => st) } : {}),
     prompt: String(fullPrompt).length > 1200 ? prompt : fullPrompt,
