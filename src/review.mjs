@@ -19,22 +19,31 @@ export const REVIEW_CODES = {
   'sensitive-data': 'Sensitive personal or financial data is visible',
   'ending-wrong': 'The ending doesn\'t show the finished result',
   'missing-context': 'The video skips something viewers need to know',
+  'example-as-rule': 'An example value the viewer would choose themselves is presented as the only answer',
 };
 // How each kind of problem can be fixed without a person.
 export const FIXES = { narration: 'rewrite the narration', rerecord: 're-record', 'rerecord-slow': 're-record with longer waits', ending: 'pick the ending again', replan: 'plan the steps again' };
 
-const SYSTEM = `You are the editor of short how-to videos for a software product. Before a video is published you
-check it the way a careful senior editor would, decide whether it's ready, and say exactly how to fix it if not.
-You get the request the video was made for, its steps (title, the actions performed, the spoken narration) and
-one screenshot from the end of each step. The last step may be a "Check your work" ending that should show the
-finished result.
+const SYSTEM = `You are the editor of short training videos for a software product. Before a video is published you
+check it the way a careful senior editor and trainer would, decide whether it's ready, and say exactly how to
+fix it if not. You get the request the video was made for, its steps (title, the actions performed, the spoken
+narration) and one screenshot from the end of each step. The last step may be a "Check your work" ending that
+should show the finished result.
 
-Judge what a viewer learning this task needs:
+Picture a new employee watching this once, then doing the task on their own account with their own details.
+Judge what they need:
 - Does each screenshot show what its narration says (labels, values, the right page, nothing still loading)?
 - Does the video actually achieve the request, and is the ending showing the result?
+- Could they repeat it with their own details? When the video types or picks a value the viewer would choose
+  themselves (a destination, dates, an employee, a job, an amount, a name), the narration must say it's their
+  choice and ours is an example ("Enter where you're going. For this example, Paris."). If it says "Enter
+  Paris" or "Select Paris" as if everyone picks Paris, that's code example-as-rule with fix "narration", and
+  "request" gives the new wording. Fixed values everyone must use are fine said plainly.
 - Does it explain the choices a viewer has to make? If it picks one option from a list (an approver type, a
   policy rule) as if it were the only one, viewers will be confused: the fix is to show the options and say
-  briefly when each is used. Also check it follows the team guidelines below.
+  briefly when each is used.
+- Does it skip anything they'd need to know or do (a step done off screen, a reason that isn't obvious)?
+- Does it follow the team guidelines below?
 - Is any real-looking personal data readable (SSN, bank or card number, password)? Test data like
   "Jane Example" and already blurred numbers are fine.
 Ignore small things a viewer wouldn't notice.
@@ -43,7 +52,7 @@ Reply with ONLY one JSON object:
 {"verdict": "approve" | "fix" | "ask",
  "confidence": 0.0-1.0,
  "summary": "one or two sentences on the video, for the team",
- "findings": [{"step": 1, "code": "narration-mismatch | screen-not-ready | wrong-screen | sensitive-data | ending-wrong | missing-context",
+ "findings": [{"step": 1, "code": "narration-mismatch | screen-not-ready | wrong-screen | sensitive-data | ending-wrong | missing-context | example-as-rule",
                "note": "what's wrong, one sentence",
                "fix": "narration | rerecord | rerecord-slow | ending | replan",
                "request": "for narration or replan: the exact change to make, written as an instruction"}],

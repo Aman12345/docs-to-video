@@ -69,6 +69,11 @@ export const SCRIPT_RULES = `How to write the narration (it is spoken by a voice
   "choose" for picking from a list; "turn on" / "turn off" for toggles; "go to" for navigation.
   Don't name the element type (button, tab, dropdown) unless it is needed to find it.
 - Speak exact values: "Enter 42.50 as the amount." Use realistic example data naturally; don't call it fake.
+- This is a training video: viewers will repeat it with their own details. When a value is the viewer's own
+  choice (where they're going, dates, which employee, job or project, an amount, a name), say it's theirs and
+  that ours is an example: "Enter where you're going. For this example, Paris." "Choose the employee; here,
+  Jane Example." Never present an example value as the one everyone must use. Fixed values (a required
+  setting, the only option that works) are said plainly.
 - Add at most one short reason when it helps: "so the expense is costed to the right job."
 - Don't read every word on the screen; name only what the viewer needs to act on, and what they should see next.
 - Step titles (chapters): 2-4 words, verb first, sentence case: "Open Reimbursements", "Enter the amount".
